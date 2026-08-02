@@ -18,6 +18,7 @@ Motor de voz:
 Uso:
     python dublar.py --audio "audio_para_dublar\\audio.mp3" --srt "audio_para_dublar\\audio.srt"
     python dublar.py --audio a.mp3 --srt a.srt --out a_dublado.mp3 --device cuda --volume 1.2
+    python dublar.py --audio filme.mp4 --srt filme.srt        # video mantem a imagem
 
 Requisitos:
     pip install chatterbox-tts soundfile numpy customtkinter psutil
@@ -36,8 +37,20 @@ import soundfile as sf
 
 SRC_SR = 24000          # amostragem da saida do Chatterbox
 TARGET_SR = 44100       # amostragem final
+FADE_MS = 15            # crossfade nas bordas de cada legenda
 CHATTERBOX_ENGINE = None
 CHATTERBOX_T3_MODEL = "v3"   # Chatterbox Multilingual V3
+
+
+def force_utf8_stdout():
+    """Forca UTF-8 no stdout/stderr. Sem isso, quando o processo e pipeado
+    (menu grafico) o Python 3.10/3.11 no Windows usa cp1252 e os acentos
+    chegam corrompidos na interface."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
 
 
 def patch_torchaudio_soundfile():
@@ -125,6 +138,7 @@ def parse_srt(path):
                 "transcribed by" in low or "webvtt" in low):
             continue
         out.append(e)
+    out.sort(key=lambda e: (e["start"], e["end"]))
     return out
 
 
@@ -134,7 +148,9 @@ def parse_srt(path):
 
 def split_text(text, max_chars=500):
     """Divide texto longo em trechos de ate ~max_chars (o Chatterbox gera
-    ate 1000 tokens por chamada), quebrando sempre em fim de frase."""
+    ate 1000 tokens por chamada), quebrando sempre em fim de frase e, no
+    caso de frases muito longas, no ultimo espaco dentro do limite para nao
+    cortar palavras no meio."""
     sentences = re.split(r"(?<=[.!?…])\s+", text.strip())
     chunks, cur = [], ""
     for s in sentences:
@@ -147,8 +163,11 @@ def split_text(text, max_chars=500):
             if cur:
                 chunks.append(cur)
             while len(s) > max_chars:
-                chunks.append(s[:max_chars].rstrip())
-                s = s[max_chars:].strip()
+                cut = s.rfind(" ", 0, max_chars)
+                if cut < max_chars // 4:
+                    cut = max_chars
+                chunks.append(s[:cut].strip())
+                s = s[cut:].strip()
             cur = s
     if cur:
         chunks.append(cur)
@@ -186,7 +205,7 @@ def synthesize_chatterbox(engine, text, ref_wav, out_wav, language="pt",
         gap = np.zeros(int(0.18 * SRC_SR), dtype=np.float32)
         parts = []
         for i, chunk in enumerate(chunks):
-            if not re.search(r"[a-zA-Z0-9]", chunk):
+            if not re.search(r"\w", chunk):
                 continue
             wav = engine.generate(text=chunk, **gen_kwargs)
             data = np.asarray(wav.squeeze(0).detach().cpu().numpy(),
@@ -194,8 +213,9 @@ def synthesize_chatterbox(engine, text, ref_wav, out_wav, language="pt",
             parts.append(data)
             if i < len(chunks) - 1:
                 parts.append(gap)
-        if parts:
-            sf.write(out_wav, np.concatenate(parts), SRC_SR)
+        if not parts:
+            raise RuntimeError("texto so com pontuacao (sem palavra para falar)")
+        sf.write(out_wav, np.concatenate(parts), SRC_SR)
 
 
 def synthesize_text(engine, text, ref_wav, out_wav, language="pt",
@@ -261,14 +281,96 @@ def load_track(audio_path, work_dir):
     return data, sr
 
 
-def place_segment(track, start, synth_data, volume):
-    """Soma a sintese na linha do tempo a partir do inicio da legenda."""
+def place_segment(track, start, synth_data, volume, fade_ms=FADE_MS):
+    """Soma a sintese na linha do tempo a partir do inicio da legenda,
+    com crossfade curto nas bordas para evitar estalos/cortes secos."""
     start_idx = int(round(start * TARGET_SR))
     n = len(synth_data)
-    if start_idx >= len(track):
+    if start_idx >= len(track) or n <= 0:
         return
-    end_idx = min(start_idx + n, len(track))
-    track[start_idx:end_idx] += synth_data[:end_idx - start_idx] * volume
+    data = synth_data[:min(n, len(track) - start_idx)]
+    f = max(int(round(fade_ms / 1000.0 * TARGET_SR)), 1)
+    if len(data) > 2 * f:
+        data = data.copy()
+        data[:f] *= np.linspace(0.0, 1.0, f, dtype=np.float32)[:, None]
+        data[-f:] *= np.linspace(1.0, 0.0, f, dtype=np.float32)[:, None]
+    elif len(data) > 1:
+        data = data.copy()
+        half = max(len(data) // 2, 1)
+        data[:half] *= np.linspace(0.0, 1.0, half, dtype=np.float32)[:, None]
+        data[half:] *= np.linspace(1.0, 0.0, len(data) - half, dtype=np.float32)[:, None]
+    track[start_idx:start_idx + len(data)] += data * volume
+
+
+def build_silence_multiplier(entries, n_samples, sr, fade_ms=FADE_MS):
+    """Multiplicador para silenciar no audio ORIGINAL apenas as regioes
+    que serao dubladas. Intervalos sobrepostos/colados sao fundidos e as
+    bordas recebem crossfade. 1.0 = mantem o original, 0.0 = silencio."""
+    if not entries:
+        return np.ones(n_samples, dtype=np.float32)
+    iv = sorted((max(e["start"], 0.0), e["end"]) for e in entries)
+    merged = []
+    for s, e in iv:
+        if merged and s <= merged[-1][1] + 0.05:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    m = np.ones(n_samples, dtype=np.float32)
+    f = max(int(round(fade_ms / 1000.0 * sr)), 1)
+    for s, e in merged:
+        si = min(int(round(s * sr)), n_samples - 1)
+        ei = min(int(round(e * sr)), n_samples)
+        if ei - si <= 2 * f + 2:
+            m[si:ei] = 0.0
+            continue
+        m[si + f:ei - f] = 0.0
+        m[si:si + f] *= np.linspace(1.0, 0.0, f, dtype=np.float32)
+        m[ei - f:ei] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
+    return m
+
+
+def has_video_stream(path):
+    """Detecta se o arquivo de entrada tem stream de video (aceita mp4,
+    mkv, mov, avi, webm...) para dublar video mantendo a imagem."""
+    try:
+        fp = shutil.which("ffprobe")
+        if fp:
+            r = subprocess.run(
+                [fp, "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=codec_type", "-of", "csv=p=0", path],
+                capture_output=True, text=True, timeout=60)
+            if "video" in r.stdout.lower():
+                return True
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(["ffmpeg", "-i", path],
+                           capture_output=True, text=True, timeout=60)
+        return "Video:" in r.stderr
+    except Exception:
+        return False
+
+
+def cleanup_workdir(work_dir, keep_parts, emit_paths):
+    """Remove os arquivos intermediarios da pasta de trabalho ao finalizar
+    com sucesso (mantem as amostras quando --emit-paths ou --keep-parts)."""
+    if not os.path.isdir(work_dir):
+        return
+    for name in ("orig.wav", "final.wav"):
+        p = os.path.join(work_dir, name)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    parts_dir = os.path.join(work_dir, "parts")
+    if (not keep_parts) and (not emit_paths) and os.path.isdir(parts_dir):
+        shutil.rmtree(parts_dir, ignore_errors=True)
+    try:
+        if not os.listdir(work_dir):
+            os.rmdir(work_dir)
+    except OSError:
+        pass
 
 
 # ============================================================
@@ -276,25 +378,33 @@ def place_segment(track, start, synth_data, volume):
 # ============================================================
 
 def main():
+    force_utf8_stdout()
     ap = argparse.ArgumentParser(
-        description="Dublador - dubla audio com clonagem de voz offline "
-                    "(motor: Chatterbox Multilingual V3)",
+        description="Dublador - dubla audio (ou video mantendo a imagem) com "
+                    "clonagem de voz offline (motor: Chatterbox Multilingual V3)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Exemplo:\n"
             "  python dublar.py --audio audio_para_dublar\\audio.mp3 "
             "--srt audio_para_dublar\\audio.srt\n"
+            "  python dublar.py --audio filme.mp4 --srt filme.srt\n"
         ),
     )
-    ap.add_argument("--audio", required=True, help="Audio no idioma original (mp3/wav...)")
+    ap.add_argument("--audio", required=True,
+                    help="Audio ou video no idioma original (mp3/wav/mp4/mkv/mov/avi/webm...)")
     ap.add_argument("--srt", required=True, help="Legenda da traducao (.srt)")
-    ap.add_argument("--out", default=None, help="Saida (.mp3 ou .wav). Padrao: <audio>_dublado.mp3")
+    ap.add_argument("--out", default=None,
+                    help="Saida. Padrao: <audio>_dublado.mp3 (ou .mp4 quando o "
+                         "arquivo de entrada e video)")
     ap.add_argument("--device", default=None, help="cuda ou cpu (padrao: cuda se disponivel)")
     ap.add_argument("--language", default="pt", help="Idioma da fala (padrao: pt)")
     ap.add_argument("--temperature", type=float, default=None,
                     help="Aleatoriedade da fala (menor = voz mais consistente e "
                          "menos sussurro; maior = mais expressivo). Padrao: 0.8")
     ap.add_argument("--volume", type=float, default=1.0, help="Ganho da voz dublada (padrao: 1.0)")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="Semente base para reprodutibilidade. Padrao: 1000 "
+                         "(cada legenda usa seed + indice)")
     ap.add_argument("--dry-run", action="store_true", help="So lista as legendas e sai")
     ap.add_argument("--workdir", default=None, help="Pasta de trabalho (padrao: .dub_<nome> ao lado da saida)")
     ap.add_argument("--keep-parts", action="store_true", help="Nao apaga os arquivos intermediarios")
@@ -308,7 +418,7 @@ def main():
                  "Instale o ffmpeg e adicione-o ao PATH.")
 
     if not os.path.exists(args.audio):
-        sys.exit(f"[ERRO] Audio nao encontrado: {args.audio}")
+        sys.exit(f"[ERRO] Audio/Video nao encontrado: {args.audio}")
     if not os.path.exists(args.srt):
         sys.exit(f"[ERRO] SRT nao encontrado: {args.srt}")
 
@@ -342,9 +452,11 @@ def main():
     except ImportError:
         pass
 
+    is_video = has_video_stream(args.audio)
     base = os.path.splitext(os.path.basename(args.audio))[0]
+    default_ext = ".mp4" if is_video else ".mp3"
     out_path = args.out or os.path.join(os.path.dirname(os.path.abspath(args.audio)),
-                                        base + "_dublado.mp3")
+                                        base + "_dublado" + default_ext)
     out_dir = os.path.dirname(os.path.abspath(out_path))
     work_dir = args.workdir or os.path.join(out_dir, f".dub_{base}")
     parts_dir = os.path.join(work_dir, "parts")
@@ -352,7 +464,7 @@ def main():
 
     print("=" * 60)
     print("  Dublador v2 (dublagem simples)")
-    print(f"  Audio: {args.audio}")
+    print(f"  Audio: {args.audio}{'  [VIDEO]' if is_video else ''}")
     print(f"  SRT:   {args.srt} ({len(entries)} legendas)")
     print(f"  Saida: {out_path}")
     print(f"  Motor: Chatterbox Multilingual V3   Idio: {args.language}   "
@@ -365,38 +477,43 @@ def main():
     channels = track.shape[1]
     print(f"  duracao: {len(track) / sr:.1f}s | canais: {channels} | {TARGET_SR} Hz")
 
+    dub_entries = [e for e in entries if re.search(r"\w", e["text"])]
+    if not dub_entries:
+        sys.exit("[ERRO] Nenhuma legenda com texto para dublar no SRT.")
+    silence = build_silence_multiplier(dub_entries, len(track), TARGET_SR)
+    track *= silence[:, None]
+
     print("\n[2/4] Carregando motor (chatterbox)...")
     engine = get_chatterbox(args.device)
 
     print(f"\n[3/4] Dublagem de {len(entries)} legendas...")
     done = 0
     skipped = 0
-    for e in entries:
+    for pos, e in enumerate(entries):
+        i_disp = pos + 1
+        n_tot = len(entries)
         start, end, text = e["start"], e["end"], e["text"]
-        if not re.search(r"[a-zA-Z0-9]", text):
+        if not re.search(r"\w", text):
             skipped += 1
+            print(f"  [DUB {i_disp:3d}/{n_tot}] (ignorada: sem texto)")
             continue
         seg_id = f"seg_{e['index']:03d}"
         ref_wav = os.path.join(parts_dir, seg_id + ".ref.wav")
         synth_wav = os.path.join(parts_dir, seg_id + ".wav")
         conv_wav = os.path.join(parts_dir, seg_id + ".conv.wav")
         fitted_wav = os.path.join(parts_dir, seg_id + ".fitted.wav")
-        print(f"  [{e['index']:3d}/{len(entries)}] {start:8.3f}-{end:8.3f}  {text[:70]}")
+        print(f"  [DUB {i_disp:3d}/{n_tot}] {start:8.3f}-{end:8.3f}  {text[:70]}")
         try:
             extract_reference(args.audio, start, end, ref_wav)
+            seed = args.seed + e["index"] if args.seed is not None else 1000 + e["index"]
             synthesize_text(engine, text, ref_wav, synth_wav,
-                            args.language, temperature=args.temperature,
-                            seed=1000 + e["index"])
+                            args.language, temperature=args.temperature, seed=seed)
             convert_to_track_format(synth_wav, conv_wav, channels)
             final_seg = fit_to_duration(conv_wav, fitted_wav, end - start, channels)
             data, _ = sf.read(final_seg, dtype="float32", always_2d=True)
             limit = int(round((end - start) * sr))
             if len(data) > limit:
                 data = data[:limit]
-            si, ei = int(round(start * sr)), min(int(round(start * sr)) + len(data),
-                                                 len(track))
-            if si < len(track):
-                track[si:ei] = 0.0
             place_segment(track, start, data, args.volume)
             done += 1
             if args.emit_paths:
@@ -408,22 +525,31 @@ def main():
                     if os.path.exists(p):
                         os.remove(p)
         except Exception as ex:
-            print(f"    [ERRO] {ex}")
+            print(f"  [DUB {i_disp:3d}/{n_tot}] [ERRO] {ex}")
 
     print(f"\n[4/4] Finalizando ({done}/{len(entries)} legendas dubladas)...")
     if skipped:
         print(f"  {skipped} legendas ignoradas (sem texto).")
     final_wav = os.path.join(work_dir, "final.wav")
+    peak = float(np.max(np.abs(track))) if len(track) else 0.0
+    if peak > 1.0:
+        track *= (0.98 / peak)
     np.clip(track, -1.0, 1.0, out=track)
     sf.write(final_wav, track, TARGET_SR)
-    if out_path.lower().endswith(".wav"):
+    is_video_out = is_video and out_path.lower().endswith((".mp4", ".mkv", ".mov", ".avi", ".webm"))
+    if is_video_out:
+        run_ffmpeg(["-i", args.audio, "-i", final_wav,
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", out_path])
+    elif out_path.lower().endswith(".wav"):
         try:
             os.replace(final_wav, out_path)
         except OSError:
             shutil.move(final_wav, out_path)
     else:
         run_ffmpeg(["-i", final_wav, "-q:a", "2", out_path])
-    print(f"[OK] Audio dublado em: {out_path}")
+    cleanup_workdir(work_dir, args.keep_parts, args.emit_paths)
+    print(f"[OK] {'Video' if is_video_out else 'Audio'} dublado em: {out_path}")
 
 
 if __name__ == "__main__":

@@ -62,6 +62,8 @@ class DublarGUI(ctk.CTk):
         self.var_volume = tk.StringVar(value="1.0")
         self.var_dry = tk.BooleanVar(value=False)
         self.var_samples = tk.BooleanVar(value=False)
+        self.var_keep = tk.BooleanVar(value=False)
+        self.var_seed = tk.StringVar(value="")
 
         self._build_ui()
 
@@ -113,7 +115,7 @@ class DublarGUI(ctk.CTk):
         self.body = body
 
         row = 0
-        self._file_row(body, row, "Audio original", self.var_audio,
+        self._file_row(body, row, "Audio/Video original", self.var_audio,
                        lambda: self._pick_file("audio"))
         row += 1
         self._file_row(body, row, "Legenda (.srt)", self.var_srt,
@@ -147,6 +149,7 @@ class DublarGUI(ctk.CTk):
         nums = [
             ("Temperatura", self.var_temp),
             ("Volume", self.var_volume),
+            ("Semente (opcional)", self.var_seed),
         ]
         for i, (label, var) in enumerate(nums):
             c = i % 2
@@ -164,6 +167,7 @@ class DublarGUI(ctk.CTk):
         checkboxes = [
             ("Ouvir amostras", self.var_samples),
             ("So listar legendas (dry-run)", self.var_dry),
+            ("Manter arquivos temporarios", self.var_keep),
         ]
         for i, (txt, var) in enumerate(checkboxes):
             r, c = divmod(i, 2)
@@ -186,6 +190,7 @@ class DublarGUI(ctk.CTk):
                                        font=ctk.CTkFont(size=15, weight="bold"),
                                        height=40, command=self.start,
                                        fg_color="#1f8a4c", hover_color="#17693a")
+        self.btn_start_fg = self.btn_start.cget("fg_color")
         self.btn_start.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.btn_open = ctk.CTkButton(btn_row, text="Abrir saida", width=110,
                                       command=self.open_outdir, state="disabled",
@@ -241,8 +246,11 @@ class DublarGUI(ctk.CTk):
     def _pick_file(self, kind):
         if kind == "audio":
             path = filedialog.askopenfilename(
-                title="Selecione o audio original",
-                filetypes=[("Audio", "*.mp3 *.wav *.m4a *.flac *.ogg *.aac"), ("Todos", "*.*")])
+                title="Selecione o audio/video original",
+                filetypes=[("Audio/Video", "*.mp3 *.wav *.m4a *.flac *.ogg *.aac *.mp4 *.mkv *.mov *.avi *.webm"),
+                           ("Audio", "*.mp3 *.wav *.m4a *.flac *.ogg *.aac"),
+                           ("Video", "*.mp4 *.mkv *.mov *.avi *.webm"),
+                           ("Todos", "*.*")])
             if path:
                 self.var_audio.set(path)
         elif kind == "srt":
@@ -279,10 +287,18 @@ class DublarGUI(ctk.CTk):
             if self.var_volume.get().strip():
                 self.log(f"[AVISO] Volume invalido ('{self.var_volume.get()}') "
                          f"ignorado (usando 1.0).\n")
+        try:
+            if self.var_seed.get().strip():
+                cmd += ["--seed", str(int(self.var_seed.get()))]
+        except ValueError:
+            self.log(f"[AVISO] Semente invalida ('{self.var_seed.get()}') "
+                     f"ignorada.\n")
         if self.var_dry.get():
             cmd.append("--dry-run")
         if self.var_samples.get():
             cmd.append("--emit-paths")
+        if self.var_keep.get():
+            cmd.append("--keep-parts")
         return cmd
 
     # ------------------------------------------------------------------
@@ -291,7 +307,7 @@ class DublarGUI(ctk.CTk):
             self.log("Ja existe uma dublagem em andamento.\n")
             return
         if not os.path.exists(self.var_audio.get()):
-            self.log(f"[ERRO] Audio nao encontrado: {self.var_audio.get()}\n")
+            self.log(f"[ERRO] Audio/Video nao encontrado: {self.var_audio.get()}\n")
             return
         if not os.path.exists(self.var_srt.get()):
             self.log(f"[ERRO] SRT nao encontrado: {self.var_srt.get()}\n")
@@ -316,10 +332,14 @@ class DublarGUI(ctk.CTk):
             child.destroy()
         if HAS_WINSOUND:
             winsound.PlaySound(None, winsound.SND_PURGE)
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         self.proc = subprocess.Popen(
             [PYTHON, "-u"] + cmd[1:],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace", bufsize=1)
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            env=env)
 
         threading.Thread(target=self._reader, daemon=True).start()
         self.after(100, self._poll)
@@ -405,7 +425,7 @@ class DublarGUI(ctk.CTk):
                 self.after(200, self.after, 0, lambda: self._flash("green"))
                 return
             self.log(item)
-            m = re.search(r"\[\s*(\d+)/(\d+)\]\s+\d", item)
+            m = re.search(r"\[DUB\s+(\d+)/(\d+)\]", item)
             if m:
                 cur, total = int(m.group(1)), int(m.group(2))
                 pct = cur / max(total, 1)
@@ -444,7 +464,7 @@ class DublarGUI(ctk.CTk):
 
     def _flash(self, color):
         self.btn_start.configure(fg_color=color)
-        self.after(600, lambda: self.btn_start.configure(fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"]))
+        self.after(600, lambda: self.btn_start.configure(fg_color=self.btn_start_fg))
 
     def log(self, text):
         self.txt.insert("end", text)

@@ -181,3 +181,4 @@ cython_debug/
 .cursorindexingignore
 
 audio_para_dublar/
+.dub_*/
