@@ -10,20 +10,17 @@ a voz do proprio trecho original (referencia por fala). A fala original
 da legenda e silenciada e a voz dublada entra no lugar, esticada
 (rubberband) para ter a MESMA duracao da fala original.
 
-Motores de voz (--engine):
-    chatterbox  (recomendado) - Chatterbox Multilingual V3 (Resemble AI),
-                MIT, 23+ idiomas (inclui pt-br), clonagem zero-shot so com
-                o audio de referencia (nao exige transcricao), ~0.5B.
-    xtts        - XTTS v2 (Coqui), 17 idiomas, licenca nao-comercial (CPML).
-    auto        - usa chatterbox se instalado, senao xtts.
+Motor de voz:
+    chatterbox (unico) - Chatterbox Multilingual V3 (Resemble AI), MIT,
+        23+ idiomas (inclui pt-br), clonagem zero-shot so com o audio de
+        referencia (nao exige transcricao), ~0.5B.
 
 Uso:
     python dublar.py --audio "audio_para_dublar\\audio.mp3" --srt "audio_para_dublar\\audio.srt"
     python dublar.py --audio a.mp3 --srt a.srt --out a_dublado.mp3 --device cuda --volume 1.2
 
 Requisitos:
-    pip install chatterbox-tts soundfile numpy   # engine chatterbox
-    pip install coqui-tts soundfile numpy        # engine xtts
+    pip install chatterbox-tts soundfile numpy customtkinter psutil
     ffmpeg no PATH
 """
 
@@ -31,15 +28,14 @@ import os
 import re
 import sys
 import argparse
+import shutil
 import subprocess
 
 import numpy as np
 import soundfile as sf
 
-SRC_SR = 24000          # amostragem da saida dos motores (XTTS e Chatterbox)
+SRC_SR = 24000          # amostragem da saida do Chatterbox
 TARGET_SR = 44100       # amostragem final
-XTTS_MODEL = "tts_models/multilingual/multi-dataset/xtts_v2"
-XTTS_ENGINE = None
 CHATTERBOX_ENGINE = None
 CHATTERBOX_T3_MODEL = "v3"   # Chatterbox Multilingual V3
 
@@ -61,17 +57,6 @@ def patch_torchaudio_soundfile():
         pass
 
 
-def get_xtts(device="cpu"):
-    """Carrega o modelo XTTS v2 uma unica vez e retorna o motor."""
-    global XTTS_ENGINE
-    if XTTS_ENGINE is None:
-        print(f"  Carregando XTTS v2 em {device} (pode levar ~1 min)...")
-        from TTS.api import TTS as _TTS_API
-        XTTS_ENGINE = _TTS_API(XTTS_MODEL, gpu=(device == "cuda"))
-        print("  XTTS v2 pronto.")
-    return XTTS_ENGINE
-
-
 def get_chatterbox(device="cpu"):
     """Carrega o Chatterbox Multilingual V3 uma unica vez e retorna o motor.
     Clona a voz so com o audio de referencia (nao exige transcricao) e
@@ -85,33 +70,6 @@ def get_chatterbox(device="cpu"):
             device=device, t3_model=CHATTERBOX_T3_MODEL)
         print("  Chatterbox Multilingual V3 pronto.")
     return CHATTERBOX_ENGINE
-
-
-def resolve_engine(name):
-    """Resolve o motor escolhido. 'auto' prefere Chatterbox se instalado."""
-    if name == "auto":
-        try:
-            import chatterbox  # noqa
-            return "chatterbox"
-        except ImportError:
-            return "xtts"
-    if name not in ("xtts", "chatterbox"):
-        sys.exit(f"[ERRO] Motor desconhecido: {name} (use xtts, chatterbox ou auto)")
-    return name
-
-
-def map_language(engine, lang):
-    """Ajusta o codigo de idioma para o motor (XTTS usa 'zh-cn';
-    Chatterbox usa 'zh' e nao tem 'zh-cn')."""
-    if engine == "chatterbox":
-        return {"zh-cn": "zh"}.get(lang, lang)
-    return lang
-
-
-def default_temperature(engine):
-    """Temperatura padrao por motor (menor no XTTS para voz estavel;
-    o Chatterbox usa 0.8 nativamente)."""
-    return 0.8 if engine == "chatterbox" else 0.3
 
 
 def run_ffmpeg(args):
@@ -171,12 +129,12 @@ def parse_srt(path):
 
 
 # ============================================================
-# TEXTO -> SINTESE (XTTS / CHATTERBOX)
+# TEXTO -> SINTESE (CHATTERBOX)
 # ============================================================
 
-def split_text(text, max_chars=190):
-    """Divide texto longo em trechos de ate ~190 chars (limite XTTS = 203
-    para pt), quebrando sempre em fim de frase."""
+def split_text(text, max_chars=500):
+    """Divide texto longo em trechos de ate ~max_chars (o Chatterbox gera
+    ate 1000 tokens por chamada), quebrando sempre em fim de frase."""
     sentences = re.split(r"(?<=[.!?…])\s+", text.strip())
     chunks, cur = [], ""
     for s in sentences:
@@ -197,20 +155,6 @@ def split_text(text, max_chars=190):
     return chunks
 
 
-def clean_xtts_text(text):
-    """Limpa pontuacao problematica para o XTTS v2. O modelo pt-BR fala
-    "ponto" para cada "." (bug coqui-ai/TTS#2952), entao troca o ponto
-    por pausa (;) e remove aspas e reticencias."""
-    text = text.strip().strip('"').strip()
-    text = re.sub(r'[“”«»"\'´`]', '', text)
-    text = text.replace('…', ';')
-    text = re.sub(r'\.{2,}', ';', text)
-    text = text.replace('.', ';')
-    text = re.sub(r';\s*', '; ', text)
-    text = re.sub(r'[ \t]+', ' ', text).strip()
-    return text
-
-
 def _torch_seed(seed):
     if seed is not None:
         try:
@@ -220,46 +164,14 @@ def _torch_seed(seed):
             pass
 
 
-def synthesize_xtts(engine, text, ref_wav, out_wav, language="pt",
-                    temperature=0.3, speed=1.0, seed=None):
-    """Sintetiza o texto clonando a voz de ref_wav com XTTS v2. Textos longos
-    sao divididos e concatenados com pequena pausa.
+def synthesize_chatterbox(engine, text, ref_wav, out_wav, language="pt",
+                          temperature=0.8, seed=None):
+    """Sintetiza o texto clonando a voz de ref_wav com Chatterbox Multilingual.
+    Clona so com o audio de referencia (nao exige transcricao). O motor ja
+    normaliza pontuacao internamente e embute marca d'agua (PerTh).
 
     seed: fixa a semente do torch antes de gerar, para a voz nao trocar de
     tom de uma fala para a outra."""
-    _torch_seed(seed)
-    gen_kwargs = {"speaker_wav": ref_wav, "language": language}
-    if temperature is not None:
-        gen_kwargs["temperature"] = temperature
-    if speed is not None:
-        gen_kwargs["speed"] = speed
-    chunks = split_text(text)
-    if len(chunks) == 1:
-        engine.tts_to_file(text=clean_xtts_text(text), file_path=out_wav,
-                           **gen_kwargs)
-    else:
-        gap = np.zeros(int(0.18 * SRC_SR), dtype=np.float32)
-        parts = []
-        for i, chunk in enumerate(chunks):
-            chunk = clean_xtts_text(chunk)
-            if not re.search(r"[a-zA-Z0-9]", chunk):
-                continue
-            tmp = f"{out_wav}.part{i}.wav"
-            engine.tts_to_file(text=chunk, file_path=tmp, **gen_kwargs)
-            data, _ = sf.read(tmp, dtype="float32")
-            os.remove(tmp)
-            parts.append(data)
-            if i < len(chunks) - 1:
-                parts.append(gap)
-        if parts:
-            sf.write(out_wav, np.concatenate(parts), SRC_SR)
-
-
-def synthesize_chatterbox(engine, text, ref_wav, out_wav, language="pt",
-                          temperature=0.8, speed=1.0, seed=None):
-    """Sintetiza o texto clonando a voz de ref_wav com Chatterbox Multilingual.
-    Clona so com o audio de referencia (nao exige transcricao). O motor ja
-    normaliza pontuacao internamente e embute marca d'agua (PerTh)."""
     _torch_seed(seed)
     gen_kwargs = {"language_id": language, "audio_prompt_path": ref_wav}
     if temperature is not None:
@@ -286,17 +198,12 @@ def synthesize_chatterbox(engine, text, ref_wav, out_wav, language="pt",
             sf.write(out_wav, np.concatenate(parts), SRC_SR)
 
 
-def synthesize_text(engine, engine_name, text, ref_wav, out_wav, language="pt",
-                    temperature=None, speed=1.0, seed=None):
-    """Roteia a sintese para o motor escolhido (xtts ou chatterbox)."""
-    lang = map_language(engine_name, language)
-    temp = temperature if temperature is not None else default_temperature(engine_name)
-    if engine_name == "chatterbox":
-        synthesize_chatterbox(engine, text, ref_wav, out_wav, lang,
-                              temperature=temp, speed=speed, seed=seed)
-    else:
-        synthesize_xtts(engine, text, ref_wav, out_wav, lang,
-                        temperature=temp, speed=speed, seed=seed)
+def synthesize_text(engine, text, ref_wav, out_wav, language="pt",
+                    temperature=None, seed=None):
+    """Sintetiza o texto clonando a voz de ref_wav com Chatterbox."""
+    temp = 0.8 if temperature is None else temperature
+    synthesize_chatterbox(engine, text, ref_wav, out_wav, language,
+                          temperature=temp, seed=seed)
 
 
 # ============================================================
@@ -321,7 +228,7 @@ def fit_to_duration(conv_wav, fitted_wav, seg_dur, channels):
     """Estica/encolhe a sintese (rubberband) para ter a MESMA duracao da
     fala original da legenda e depois corta/preenche para a duracao exata.
     Trava o fator entre 0.5x e 2.0x para nao distorcer demais."""
-    data, sr = sf.read(conv_wav, dtype="float32")
+    data, sr = sf.read(conv_wav, dtype="float32", always_2d=True)
     cur = len(data) / sr
     target = max(seg_dur, 0.15)
     if cur <= 0.01:
@@ -334,7 +241,7 @@ def fit_to_duration(conv_wav, fitted_wav, seg_dur, channels):
         run_ffmpeg(["-i", conv_wav, "-af", f"rubberband=tempo={tempo:.4f}",
                     "-ar", str(TARGET_SR), "-ac", str(channels),
                     "-acodec", "pcm_s16le", fitted_wav])
-    data, sr = sf.read(fitted_wav, dtype="float32")
+    data, sr = sf.read(fitted_wav, dtype="float32", always_2d=True)
     n = int(round(target * sr))
     if len(data) > n:
         data = data[:n]
@@ -371,7 +278,7 @@ def place_segment(track, start, synth_data, volume):
 def main():
     ap = argparse.ArgumentParser(
         description="Dublador - dubla audio com clonagem de voz offline "
-                    "(motores: chatterbox ou xtts)",
+                    "(motor: Chatterbox Multilingual V3)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Exemplo:\n"
@@ -383,16 +290,10 @@ def main():
     ap.add_argument("--srt", required=True, help="Legenda da traducao (.srt)")
     ap.add_argument("--out", default=None, help="Saida (.mp3 ou .wav). Padrao: <audio>_dublado.mp3")
     ap.add_argument("--device", default=None, help="cuda ou cpu (padrao: cuda se disponivel)")
-    ap.add_argument("--engine", default="auto", choices=["auto", "xtts", "chatterbox"],
-                    help="Motor de voz: chatterbox (recomendado, MIT, pt-br), "
-                         "xtts (antigo) ou auto (usa chatterbox se instalado)")
     ap.add_argument("--language", default="pt", help="Idioma da fala (padrao: pt)")
     ap.add_argument("--temperature", type=float, default=None,
                     help="Aleatoriedade da fala (menor = voz mais consistente e "
-                         "menos sussurro; maior = mais expressivo). Padrao por motor: "
-                         "xtts=0.3, chatterbox=0.8")
-    ap.add_argument("--speed", type=float, default=1.0,
-                    help="Velocidade da fala (so XTTS; padrao: 1.0)")
+                         "menos sussurro; maior = mais expressivo). Padrao: 0.8")
     ap.add_argument("--volume", type=float, default=1.0, help="Ganho da voz dublada (padrao: 1.0)")
     ap.add_argument("--dry-run", action="store_true", help="So lista as legendas e sai")
     ap.add_argument("--workdir", default=None, help="Pasta de trabalho (padrao: .dub_<nome> ao lado da saida)")
@@ -401,6 +302,10 @@ def main():
                     help="Imprime [SEG] <idx> <path> a cada amostra gerada e mantem "
                          "o arquivo (para ouvir pelo menu grafico)")
     args = ap.parse_args()
+
+    if shutil.which("ffmpeg") is None:
+        sys.exit("[ERRO] ffmpeg nao encontrado no PATH. "
+                 "Instale o ffmpeg e adicione-o ao PATH.")
 
     if not os.path.exists(args.audio):
         sys.exit(f"[ERRO] Audio nao encontrado: {args.audio}")
@@ -425,11 +330,17 @@ def main():
         except Exception:
             args.device = "cpu"
 
-    engine_name = resolve_engine(args.engine)
-
     os.environ["COQUI_TOS_AGREED"] = "1"
     os.environ["TQDM_DISABLE"] = "1"
     patch_torchaudio_soundfile()
+
+    try:
+        from chatterbox.mtl_tts import SUPPORTED_LANGUAGES
+        if args.language.lower() not in SUPPORTED_LANGUAGES:
+            sys.exit(f"[ERRO] Idioma '{args.language}' nao suportado pelo "
+                     f"Chatterbox. Disponiveis: {', '.join(sorted(SUPPORTED_LANGUAGES))}")
+    except ImportError:
+        pass
 
     base = os.path.splitext(os.path.basename(args.audio))[0]
     out_path = args.out or os.path.join(os.path.dirname(os.path.abspath(args.audio)),
@@ -444,7 +355,8 @@ def main():
     print(f"  Audio: {args.audio}")
     print(f"  SRT:   {args.srt} ({len(entries)} legendas)")
     print(f"  Saida: {out_path}")
-    print(f"  Motor: {engine_name}   Idio: {args.language}   Device: {args.device}")
+    print(f"  Motor: Chatterbox Multilingual V3   Idio: {args.language}   "
+          f"Device: {args.device}")
     print("  Voz dublada esticada para a mesma duracao da fala original")
     print("=" * 60)
 
@@ -453,17 +365,16 @@ def main():
     channels = track.shape[1]
     print(f"  duracao: {len(track) / sr:.1f}s | canais: {channels} | {TARGET_SR} Hz")
 
-    print(f"\n[2/4] Carregando motor ({engine_name})...")
-    if engine_name == "chatterbox":
-        engine = get_chatterbox(args.device)
-    else:
-        engine = get_xtts(args.device)
+    print("\n[2/4] Carregando motor (chatterbox)...")
+    engine = get_chatterbox(args.device)
 
     print(f"\n[3/4] Dublagem de {len(entries)} legendas...")
     done = 0
+    skipped = 0
     for e in entries:
         start, end, text = e["start"], e["end"], e["text"]
         if not re.search(r"[a-zA-Z0-9]", text):
+            skipped += 1
             continue
         seg_id = f"seg_{e['index']:03d}"
         ref_wav = os.path.join(parts_dir, seg_id + ".ref.wav")
@@ -473,15 +384,19 @@ def main():
         print(f"  [{e['index']:3d}/{len(entries)}] {start:8.3f}-{end:8.3f}  {text[:70]}")
         try:
             extract_reference(args.audio, start, end, ref_wav)
-            synthesize_text(engine, engine_name, text, ref_wav, synth_wav,
+            synthesize_text(engine, text, ref_wav, synth_wav,
                             args.language, temperature=args.temperature,
-                            speed=args.speed, seed=1000 + e["index"])
+                            seed=1000 + e["index"])
             convert_to_track_format(synth_wav, conv_wav, channels)
             final_seg = fit_to_duration(conv_wav, fitted_wav, end - start, channels)
-            si, ei = int(round(start * sr)), int(round(end * sr))
-            if si < len(track):
-                track[si:min(ei, len(track))] = 0.0
             data, _ = sf.read(final_seg, dtype="float32", always_2d=True)
+            limit = int(round((end - start) * sr))
+            if len(data) > limit:
+                data = data[:limit]
+            si, ei = int(round(start * sr)), min(int(round(start * sr)) + len(data),
+                                                 len(track))
+            if si < len(track):
+                track[si:ei] = 0.0
             place_segment(track, start, data, args.volume)
             done += 1
             if args.emit_paths:
@@ -496,10 +411,16 @@ def main():
             print(f"    [ERRO] {ex}")
 
     print(f"\n[4/4] Finalizando ({done}/{len(entries)} legendas dubladas)...")
+    if skipped:
+        print(f"  {skipped} legendas ignoradas (sem texto).")
     final_wav = os.path.join(work_dir, "final.wav")
+    np.clip(track, -1.0, 1.0, out=track)
     sf.write(final_wav, track, TARGET_SR)
     if out_path.lower().endswith(".wav"):
-        os.replace(final_wav, out_path)
+        try:
+            os.replace(final_wav, out_path)
+        except OSError:
+            shutil.move(final_wav, out_path)
     else:
         run_ffmpeg(["-i", final_wav, "-q:a", "2", out_path])
     print(f"[OK] Audio dublado em: {out_path}")

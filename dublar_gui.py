@@ -3,7 +3,7 @@
 Dublador v2 - Interface grafica (customtkinter)
 ================================================
 Menu para configurar e rodar o dublar.py sem linha de comando.
-Motores de voz: chatterbox (recomendado, MIT, pt-br) ou xtts.
+Motor de voz: Chatterbox Multilingual V3 (MIT, pt-br).
 
 Uso:
     python dublar_gui.py
@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import queue
+import shutil
 import subprocess
 import threading
 import tkinter as tk
@@ -34,7 +35,6 @@ ctk.set_appearance_mode("light")
 ctk.set_default_color_theme(os.path.join(BASE_DIR, "dublador_theme.json"))
 
 DEVICES = ["auto", "cuda", "cpu"]
-ENGINES = ["auto", "chatterbox", "xtts"]
 LANGS = ["pt", "en", "es", "fr", "de", "it", "zh", "ja", "ko"]
 
 
@@ -52,11 +52,11 @@ class DublarGUI(ctk.CTk):
         self.sample_rows = {}
         self.paused = False
         self.cancelled = False
+        self.theme_dark = False
         self.var_audio = tk.StringVar(value=os.path.join(BASE_DIR, "audio_para_dublar", "audio.mp3"))
         self.var_srt = tk.StringVar(value=os.path.join(BASE_DIR, "audio_para_dublar", "audio.srt"))
         self.var_out = tk.StringVar(value="")
         self.var_device = tk.StringVar(value="auto")
-        self.var_engine = tk.StringVar(value="auto")
         self.var_lang = tk.StringVar(value="pt")
         self.var_temp = tk.StringVar(value="")
         self.var_volume = tk.StringVar(value="1.0")
@@ -84,12 +84,25 @@ class DublarGUI(ctk.CTk):
         header = tk.Canvas(self, height=88, highlightthickness=0, bd=0)
         header.grid(row=0, column=0, sticky="ew")
         self._draw_gradient(header, 88, "#A78BFA", "#6D3FD8")
-        header.bind("<Configure>", lambda e: self._draw_gradient(header, 88, "#A78BFA", "#6D3FD8"))
+        self.btn_theme = ctk.CTkButton(
+            header, text="Tema escuro", width=110, height=30,
+            command=self.toggle_theme, font=ctk.CTkFont(size=12),
+            fg_color="#5B3AA8", hover_color="#4A2E8A")
+        header.create_window(0, 0, window=self.btn_theme, anchor="ne",
+                             tags=("theme_btn",))
+        header.bind("<Configure>", lambda e: (
+            self._draw_gradient(header, 88, "#A78BFA", "#6D3FD8"),
+            header.coords("theme_btn", header.winfo_width() - 8, 44)))
         header.create_text(22, 26, text="Dublador v2", anchor="w",
                            fill="#FFFFFF", font=("Segoe UI", 24, "bold"))
         header.create_text(24, 62, text="Dublagem com clonagem de voz offline",
                            anchor="w", fill="#EBDDFF", font=("Segoe UI", 12))
         return header
+
+    def toggle_theme(self):
+        self.theme_dark = not self.theme_dark
+        ctk.set_appearance_mode("dark" if self.theme_dark else "light")
+        self.btn_theme.configure(text="Tema claro" if self.theme_dark else "Tema escuro")
 
     def _build_ui(self):
         self._build_header()
@@ -115,7 +128,6 @@ class DublarGUI(ctk.CTk):
         row += 1
 
         opts = [
-            ("Motor de voz", self.var_engine, ENGINES),
             ("Dispositivo", self.var_device, DEVICES),
             ("Idioma da fala", self.var_lang, LANGS),
         ]
@@ -159,11 +171,10 @@ class DublarGUI(ctk.CTk):
                 row=r, column=c, sticky="w", padx=10, pady=3)
         row += 2
 
-        ctk.CTkLabel(body, text="Dica: 'auto' usa Chatterbox (recomendado, MIT) se "
-                                 "instalado, senao XTTS. Temperatura vazia = padrao do "
-                                 "motor (xtts 0.3, chatterbox 0.8); menor = voz mais "
-                                 "consistente. A voz dublada e esticada para caber "
-                                 "exatamente na duracao da fala original.",
+        ctk.CTkLabel(body, text="Dica: a voz dublada e esticada para caber "
+                                 "exatamente na duracao da fala original. "
+                                 "Temperatura vazia = padrao (0.8); menor = voz "
+                                 "mais consistente e menos sussurro.",
                      font=ctk.CTkFont(size=12), text_color="gray70").grid(
             row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 4))
         row += 1
@@ -253,19 +264,21 @@ class DublarGUI(ctk.CTk):
                "--srt", self.var_srt.get()]
         if self.var_out.get():
             cmd += ["--out", self.var_out.get()]
-        if self.var_engine.get() != "auto":
-            cmd += ["--engine", self.var_engine.get()]
         if self.var_device.get() != "auto":
             cmd += ["--device", self.var_device.get()]
         cmd += ["--language", self.var_lang.get()]
         try:
             cmd += ["--temperature", str(float(self.var_temp.get()))]
         except ValueError:
-            pass
+            if self.var_temp.get().strip():
+                self.log(f"[AVISO] Temperatura invalida ('{self.var_temp.get()}') "
+                         f"ignorada (usando padrao 0.8).\n")
         try:
             cmd += ["--volume", str(float(self.var_volume.get()))]
         except ValueError:
-            pass
+            if self.var_volume.get().strip():
+                self.log(f"[AVISO] Volume invalido ('{self.var_volume.get()}') "
+                         f"ignorado (usando 1.0).\n")
         if self.var_dry.get():
             cmd.append("--dry-run")
         if self.var_samples.get():
@@ -282,6 +295,10 @@ class DublarGUI(ctk.CTk):
             return
         if not os.path.exists(self.var_srt.get()):
             self.log(f"[ERRO] SRT nao encontrado: {self.var_srt.get()}\n")
+            return
+        if shutil.which("ffmpeg") is None:
+            self.log("[ERRO] ffmpeg nao encontrado no PATH. "
+                     "Instale o ffmpeg e adicione-o ao PATH.\n")
             return
 
         self.txt.delete("0.0", "end")

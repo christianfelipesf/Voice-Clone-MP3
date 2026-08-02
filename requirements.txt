@@ -1,0 +1,17 @@
+# Dublador - dependencias
+#
+# Instalacao:
+#   pip install -r requirements.txt
+#
+# Obs: ffmpeg precisa estar instalado no sistema e no PATH (nao via pip).
+
+# Voz (Chatterbox Multilingual V3, MIT, 100% offline)
+chatterbox-tts==0.1.7
+
+# Audio
+numpy>=1.24,<2
+soundfile>=0.12
+
+# Interface grafica
+customtkinter>=5.2
+psutil>=5.9
