@@ -5,29 +5,43 @@ Dublador - Dublagem com clonagem de voz offline
 Dubla um arquivo de audio usando o texto de um .srt (traducao) e
 clonando a voz do audio ORIGINAL, 100% offline.
 
-Para cada legenda, o texto do .srt e falado no idioma escolhido clonando
+Sem .srt: o script detecta o idioma da midia, transcreve com Whisper
+(faster-whisper, com timestamps) e traduz cada fala para o idioma de
+saida (padrao pt) via Google Translate. Depois dubla como se fosse um
+.srt gerado.
+
+Para cada legenda, o texto e falado no idioma escolhido clonando
 a voz do proprio trecho original (referencia por fala). A fala original
 da legenda e silenciada e a voz dublada entra no lugar, esticada
 (rubberband) para ter a MESMA duracao da fala original.
 
 Motor de voz:
-    chatterbox (unico) - Chatterbox Multilingual V3 (Resemble AI), MIT,
+    chatterbox (padrao) - Chatterbox Multilingual V3 (Resemble AI), MIT,
         23+ idiomas (inclui pt-br), clonagem zero-shot so com o audio de
-        referencia (nao exige transcricao), ~0.5B.
+        referencia (nao exige transcricao), ~0.5B, 100% offline.
+    edge - Edge TTS (Microsoft), leve e rapido, usa uma voz neural padrao
+        por idioma (sem clonagem de voz), requer internet.
 
 Uso:
     python dublar.py --audio "audio_para_dublar\\audio.mp3" --srt "audio_para_dublar\\audio.srt"
     python dublar.py --audio a.mp3 --srt a.srt --out a_dublado.mp3 --device cuda --volume 1.2
     python dublar.py --audio filme.mp4 --srt filme.srt        # video mantem a imagem
+    python dublar.py --audio a.mp3                            # modo automatico:
+                                                              #   detecta idioma + transcreve (whisper)
+                                                              #   + traduz para pt + dubla
+    python dublar.py --audio a.mp3 --gen-srt                  # modo automatico + salva o .srt gerado
+    python dublar.py --audio a.mp3 --engine edge              # motor leve (sem clonagem)
 
 Requisitos:
     pip install chatterbox-tts soundfile numpy customtkinter psutil
+    pip install faster-whisper deep-translator edge-tts
     ffmpeg no PATH
 """
 
 import os
 import re
 import sys
+import time
 import argparse
 import shutil
 import subprocess
@@ -40,6 +54,19 @@ TARGET_SR = 44100       # amostragem final
 FADE_MS = 15            # crossfade nas bordas de cada legenda
 CHATTERBOX_ENGINE = None
 CHATTERBOX_T3_MODEL = "v3"   # Chatterbox Multilingual V3
+
+# Vozes padrao do Edge TTS (motor leve) por idioma de saida.
+EDGE_VOICES = {
+    "pt": "pt-BR-FranciscaNeural",
+    "en": "en-US-JennyNeural",
+    "es": "es-ES-ElviraNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "de": "de-DE-KatjaNeural",
+    "it": "it-IT-ElsaNeural",
+    "zh": "zh-CN-XiaoxiaoNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "ko": "ko-KR-SunHiNeural",
+}
 
 
 def force_utf8_stdout():
@@ -143,6 +170,98 @@ def parse_srt(path):
 
 
 # ============================================================
+# MODO AUTOMATICO (sem .srt): transcreve + traduz
+# ============================================================
+
+def translate_text(text, target="pt", retries=3):
+    """Traduz um trecho para `target` usando Google Translate (online).
+    Valida o resultado (Google as vezes devolve pagina de erro 500) e faz
+    retries com espera. Em ultimo caso devolve o texto original."""
+    text = (text or "").strip()
+    if not text:
+        return text
+
+    bad = re.compile(r"(error\s*500|that'?s\s*an\s*error|please\s*try\s*again"
+                     r"\s*later|server\s*error|<!doctype\s*html|<html)", re.I)
+
+    def ok(t):
+        t = (t or "").strip()
+        return bool(re.search(r"\w", t)) and not bad.search(t)
+
+    for attempt in range(retries):
+        try:
+            from deep_translator import GoogleTranslator
+            out = GoogleTranslator(source="auto",
+                                   target=target).translate(text=text)
+            if ok(out):
+                return out.strip()
+        except Exception:
+            pass
+
+        try:
+            import json
+            import urllib.parse
+            import urllib.request
+            url = ("https://translate.googleapis.com/translate_a/single"
+                   f"?client=gtx&sl=auto&tl={urllib.parse.quote(target)}"
+                   f"&dt=t&q={urllib.parse.quote(text)}")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=25) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            out = "".join(part[0] for part in data[0] if part and part[0])
+            if ok(out):
+                return out.strip()
+        except Exception:
+            pass
+        if attempt < retries - 1:
+            time.sleep(1.5 * (attempt + 1))
+    return text
+
+
+def transcribe_entries(audio_path, model_size="small", device="cpu",
+                       target_lang="pt"):
+    """Transcreve a midia com faster-whisper (detecta o idioma sozinho),
+    traduz cada fala para `target_lang` e devolve a lista de legendas no
+    mesmo formato do parse_srt."""
+    print(f"  Carregando Whisper ({model_size}, {device})...")
+    from faster_whisper import WhisperModel
+    compute = "float16" if device == "cuda" else "int8"
+    model = WhisperModel(model_size, device=device, compute_type=compute)
+    print("  Transcrevendo (detecta idioma automaticamente)...")
+    segments, info = model.transcribe(
+        audio_path, language=None, vad_filter=True, beam_size=5)
+    detected = info.language
+    print(f"  Idioma detectado: {detected} "
+          f"(probabilidade {float(info.language_probability):.2f})")
+    entries = []
+    for i, seg in enumerate(segments, 1):
+        text = (seg.text or "").strip()
+        if not text:
+            continue
+        translated = translate_text(text, target=target_lang)
+        entries.append({"index": i, "start": float(seg.start),
+                        "end": float(seg.end), "text": translated})
+        if i % 5 == 0:
+            time.sleep(0.3)
+    return entries, detected
+
+
+def write_srt(entries, path):
+    """Salva as legendas geradas no modo automatico como .srt."""
+    def fmt(t):
+        ms = int(round((t % 1) * 1000))
+        s = int(t)
+        return f"{s // 3600:02d}:{s % 3600 // 60:02d}:{s % 60:02d},{ms:03d}"
+
+    with open(path, "w", encoding="utf-8") as f:
+        for e in entries:
+            f.write(f"{e['index']}\n")
+            f.write(f"{fmt(e['start'])} --> {fmt(e['end'])}\n")
+            f.write(e["text"].strip() + "\n\n")
+    return path
+
+
+# ============================================================
 # TEXTO -> SINTESE (CHATTERBOX)
 # ============================================================
 
@@ -219,11 +338,65 @@ def synthesize_chatterbox(engine, text, ref_wav, out_wav, language="pt",
 
 
 def synthesize_text(engine, text, ref_wav, out_wav, language="pt",
-                    temperature=None, seed=None):
-    """Sintetiza o texto clonando a voz de ref_wav com Chatterbox."""
+                    temperature=None, seed=None, engine_name="chatterbox"):
+    """Sintetiza o texto. engine_name='chatterbox' clona a voz de ref_wav
+    com o Chatterbox; engine_name='edge' usa o Edge TTS (voz neural padrao
+    do idioma, leve, sem clonagem, requer internet)."""
+    if engine_name == "edge":
+        synthesize_edge(text, out_wav, language)
+        return
     temp = 0.8 if temperature is None else temperature
     synthesize_chatterbox(engine, text, ref_wav, out_wav, language,
                           temperature=temp, seed=seed)
+
+
+def _edge_save(text, voice, path):
+    """Gera o audio do texto com o Edge TTS e salva em `path` (mp3)."""
+    import asyncio
+    import edge_tts
+
+    async def _go():
+        c = edge_tts.Communicate(text, voice)
+        await c.save(path)
+
+    asyncio.run(_go())
+
+
+def synthesize_edge(text, out_wav, language="pt"):
+    """Sintetiza o texto com Edge TTS usando a voz neural padrao do idioma.
+    Textos longos sao divididos (como no Chatterbox) e unidos por ffmpeg,
+    para nao estourar o limite por requisicao do servico."""
+    import edge_tts
+    voice = EDGE_VOICES.get(language.lower(), EDGE_VOICES["pt"])
+    chunks = split_text(text)
+    if len(chunks) == 1:
+        _edge_save(chunks[0], voice, out_wav)
+        return
+    parts_dir = os.path.dirname(os.path.abspath(out_wav))
+    tmp_parts = []
+    for i, chunk in enumerate(chunks):
+        if not re.search(r"\w", chunk):
+            continue
+        p = os.path.join(parts_dir, f"_edge_{i}.mp3")
+        _edge_save(chunk, voice, p)
+        tmp_parts.append(p)
+    if not tmp_parts:
+        raise RuntimeError("texto so com pontuacao (sem palavra para falar)")
+    lst = os.path.join(parts_dir, "_edge_list.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        for p in tmp_parts:
+            f.write(f"file '{p}'\n")
+    run_ffmpeg(["-f", "concat", "-safe", "0", "-i", lst,
+                "-c:a", "libmp3lame", "-q:a", "4", out_wav])
+    for p in tmp_parts:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    try:
+        os.remove(lst)
+    except OSError:
+        pass
 
 
 # ============================================================
@@ -404,11 +577,26 @@ def main():
             "  python dublar.py --audio audio_para_dublar\\audio.mp3 "
             "--srt audio_para_dublar\\audio.srt\n"
             "  python dublar.py --audio filme.mp4 --srt filme.srt\n"
+            "  python dublar.py --audio a.mp3\n"
+            "    (sem --srt: detecta o idioma, transcreve com Whisper e\n"
+            "     traduz para o idioma de saida, gerando as legendas)\n"
         ),
     )
     ap.add_argument("--audio", required=True,
                     help="Audio ou video no idioma original (mp3/wav/mp4/mkv/mov/avi/webm...)")
-    ap.add_argument("--srt", required=True, help="Legenda da traducao (.srt)")
+    ap.add_argument("--srt", default=None,
+                    help="Legenda da traducao (.srt). Omita para o modo "
+                         "automatico: detecta o idioma da midia, transcreve "
+                         "com Whisper e traduz para o idioma de saida")
+    ap.add_argument("--whisper-model", default="small",
+                    help="Modelo do Whisper para o modo automatico "
+                         "(tiny/base/small/medium/large-v3; padrao: small)")
+    ap.add_argument("--engine", default="chatterbox",
+                    help="Motor de dublagem: chatterbox (clonagem de voz, "
+                         "offline, padrao) ou edge (Edge TTS, leve, online, "
+                         "sem clonagem)")
+    ap.add_argument("--gen-srt", action="store_true",
+                    help="No modo automatico, salva o .srt gerado ao lado do audio")
     ap.add_argument("--out", default=None,
                     help="Saida. Padrao: <audio>_dublado.mp3 (ou .mp4 quando o "
                          "arquivo de entrada e video)")
@@ -440,19 +628,10 @@ def main():
 
     if not os.path.exists(args.audio):
         sys.exit(f"[ERRO] Audio/Video nao encontrado: {args.audio}")
-    if not os.path.exists(args.srt):
+    if args.srt and not os.path.exists(args.srt):
         sys.exit(f"[ERRO] SRT nao encontrado: {args.srt}")
 
-    entries = parse_srt(args.srt)
-    if not entries:
-        sys.exit("[ERRO] Nenhuma legenda valida encontrada no SRT.")
-
-    if args.dry_run:
-        print(f"[PLAN] {len(entries)} legendas em {args.srt}")
-        for e in entries:
-            print(f"  [{e['index']:3d}] {e['start']:8.3f} -> {e['end']:8.3f} "
-                  f"({e['end'] - e['start']:6.2f}s)  {e['text'][:70]}")
-        return
+    auto_mode = not args.srt
 
     if args.device is None:
         try:
@@ -461,15 +640,54 @@ def main():
         except Exception:
             args.device = "cpu"
 
+    if auto_mode:
+        print("=" * 60)
+        print("  Modo automatico (sem .srt):")
+        print("    1. detecta o idioma da midia (Whisper)")
+        print("    2. transcreve cada fala com timestamps")
+        print("    3. traduz para '" + args.language + "' (Google Translate)")
+        print("    4. dubla as legendas geradas")
+        print("=" * 60)
+        print("\n[0/4] Transcrevendo e traduzindo...")
+        entries, detected_lang = transcribe_entries(
+            args.audio, args.whisper_model, args.device, args.language)
+        if not entries:
+            sys.exit("[ERRO] Nenhuma fala detectada no audio.")
+        if args.gen_srt:
+            base = os.path.splitext(os.path.basename(args.audio))[0]
+            srt_path = os.path.join(os.path.dirname(os.path.abspath(args.audio)),
+                                    base + "_traducao.srt")
+            write_srt(entries, srt_path)
+            print(f"  [SRT] Traducao salva em: {srt_path}")
+    else:
+        entries = parse_srt(args.srt)
+        detected_lang = None
+
+    if not entries:
+        sys.exit("[ERRO] Nenhuma legenda valida encontrada no SRT.")
+
+    if args.dry_run:
+        print(f"[PLAN] {len(entries)} legendas "
+              f"{'geradas automaticamente' if auto_mode else f'em {args.srt}'}")
+        for e in entries:
+            print(f"  [{e['index']:3d}] {e['start']:8.3f} -> {e['end']:8.3f} "
+                  f"({e['end'] - e['start']:6.2f}s)  {e['text'][:70]}")
+        return
+
     os.environ["COQUI_TOS_AGREED"] = "1"
     os.environ["TQDM_DISABLE"] = "1"
     patch_torchaudio_soundfile()
 
     try:
-        from chatterbox.mtl_tts import SUPPORTED_LANGUAGES
-        if args.language.lower() not in SUPPORTED_LANGUAGES:
-            sys.exit(f"[ERRO] Idioma '{args.language}' nao suportado pelo "
-                     f"Chatterbox. Disponiveis: {', '.join(sorted(SUPPORTED_LANGUAGES))}")
+        if args.engine == "edge":
+            if args.language.lower() not in EDGE_VOICES:
+                sys.exit(f"[ERRO] Idioma '{args.language}' nao suportado pelo "
+                         f"Edge TTS. Disponiveis: {', '.join(sorted(EDGE_VOICES))}")
+        else:
+            from chatterbox.mtl_tts import SUPPORTED_LANGUAGES
+            if args.language.lower() not in SUPPORTED_LANGUAGES:
+                sys.exit(f"[ERRO] Idioma '{args.language}' nao suportado pelo "
+                         f"Chatterbox. Disponiveis: {', '.join(sorted(SUPPORTED_LANGUAGES))}")
     except ImportError:
         pass
 
@@ -486,10 +704,15 @@ def main():
     print("=" * 60)
     print("  Dublador v2 (dublagem simples)")
     print(f"  Audio: {args.audio}{'  [VIDEO]' if is_video else ''}")
-    print(f"  SRT:   {args.srt} ({len(entries)} legendas)")
+    if auto_mode:
+        print(f"  Auto:  idioma '{detected_lang}' transcrito e traduzido "
+              f"para '{args.language}' ({len(entries)} legendas)")
+    else:
+        print(f"  SRT:   {args.srt} ({len(entries)} legendas)")
     print(f"  Saida: {out_path}")
-    print(f"  Motor: Chatterbox Multilingual V3   Idio: {args.language}   "
-          f"Device: {args.device}")
+    print(f"  Motor: {'Edge TTS (leve)' if args.engine == 'edge' else 'Chatterbox Multilingual V3'}   "
+          f"Idio: {args.language}   "
+          f"Device: {args.device if args.engine != 'edge' else 'n/a'}")
     print("  Voz dublada esticada para a mesma duracao da fala original")
     print("=" * 60)
 
@@ -508,8 +731,12 @@ def main():
                                        memmap_path=sil_path)
     track *= silence[:, None]
 
-    print("\n[2/4] Carregando motor (chatterbox)...")
-    engine = get_chatterbox(args.device)
+    is_edge = args.engine == "edge"
+    print("\n[2/4] Carregando motor"
+          + (" (Edge TTS, leve)..." if is_edge else " (chatterbox)..."))
+    engine = None
+    if not is_edge:
+        engine = get_chatterbox(args.device)
 
     print(f"\n[3/4] Dublagem de {len(entries)} legendas...")
     done = 0
@@ -530,10 +757,14 @@ def main():
         fitted_wav = os.path.join(parts_dir, seg_id + ".fitted.wav")
         print(f"  [DUB {i_disp:3d}/{n_tot}] {start:8.3f}-{end:8.3f}  {text[:70]}")
         try:
-            extract_reference(args.audio, start, end, ref_wav)
-            seed = args.seed + e["index"] if args.seed is not None else 1000 + e["index"]
-            synthesize_text(engine, text, ref_wav, synth_wav,
-                            args.language, temperature=args.temperature, seed=seed)
+            if is_edge:
+                synthesize_text(None, text, None, synth_wav,
+                                args.language, engine_name="edge")
+            else:
+                extract_reference(args.audio, start, end, ref_wav)
+                seed = args.seed + e["index"] if args.seed is not None else 1000 + e["index"]
+                synthesize_text(engine, text, ref_wav, synth_wav,
+                                args.language, temperature=args.temperature, seed=seed)
             convert_to_track_format(synth_wav, conv_wav, channels)
             final_seg = fit_to_duration(conv_wav, fitted_wav, end - start, channels,
                                         max_tempo=args.max_tempo)
@@ -545,7 +776,8 @@ def main():
             done += 1
             print(f"[PROGRESS] {done}/{dub_total}")
             if args.emit_paths:
-                print(f"[SEG] {e['index']}\t{os.path.abspath(final_seg)}\t{text[:70]}")
+                print(f"[SEG] {e['index']}\t{os.path.abspath(final_seg)}"
+                      f"\t{start:.3f}\t{end:.3f}\t{text[:70]}")
             if not args.keep_parts:
                 for p in (synth_wav, conv_wav, fitted_wav, ref_wav):
                     if args.emit_paths and p == final_seg:

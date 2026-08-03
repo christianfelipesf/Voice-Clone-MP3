@@ -1,17 +1,43 @@
 # Dublador
 
-Dublagem offline com clonagem de voz usando o **Chatterbox Multilingual V3**
+Dublagem com clonagem de voz usando o **Chatterbox Multilingual V3**
 (Resemble AI, licenca MIT, 100% offline). A voz dublada e esticada
 (rubberband) para ter a mesma duracao da fala original de cada legenda.
 Funciona com **audio (mp3/wav/...) e video (mp4/mkv/mov/avi/webm)** —
 no video a imagem e mantida e so o audio e substituido.
+
+**Motores de voz:** você pode escolher entre
+- `chatterbox` (padrao) — clonagem de voz, 100% offline;
+- `edge` — **Edge TTS** (Microsoft, leve e rapido, online), sem clonagem,
+  usa uma voz neural padrao do idioma. Ideal para testes rapidos.
+
+**Sem .srt?** Tambem funciona no **modo automatico**: o script detecta o
+idioma da midia, transcreve cada fala com timestamps (faster-whisper) e
+traduz para o idioma de saida (padrao `pt`) via Google Translate — depois
+dubla como se fosse um .srt gerado. A transcricao e offline; a traducao
+precisa de internet.
+
+**Do YouTube?** Basta colar o link (na GUI ou via `dublar_yt.py`). O script
+baixa o video na resolucao escolhida e procura legendas nesta ordem:
+1. legenda em portugues (manual) → usa direto;
+2. legenda automatica em portugues → usa direto;
+3. legenda em outro idioma → traduz para o idioma de saida;
+4. nenhuma legenda → transcreve com Whisper e traduz.
+
+**Preview em tempo real (GUI):** marque *"Preview em tempo real (video)"* nas
+opcoes avancadas e um player (ffplay) abre mostrando o video sincronizado
+com a geracao: as partes ainda nao dubladas tocam o audio original e, a
+cada trecho dublado pronto, ele entra na posicao correta da linha do tempo
+— o video espera enquanto um trecho esta sendo gerado. O YouTube limita o
+download de legendas por IP (HTTP 429); na GUI escolha o navegador em
+*"Cookies do navegador"* para evitar o bloqueio.
 
 ## Requisitos
 
 - Python 3.10+
 - [ffmpeg](https://ffmpeg.org/download.html) instalado e no PATH
 - Dependencias: `pip install -r requirements.txt`
-  (primeira execucao baixa ~2 GB de pesos da HuggingFace)
+  (primeira execucao baixa ~2 GB de pesos da HuggingFace + o modelo do Whisper)
 
 ## Uso
 
@@ -33,6 +59,12 @@ Linha de comando:
 python dublar.py --audio "audio_para_dublar\audio.mp3" --srt "audio_para_dublar\audio.srt"
 python dublar.py --audio a.mp3 --srt a.srt --out a_dublado.mp3 --device cuda --volume 1.2
 python dublar.py --audio filme.mp4 --srt filme.srt          # gera filme_dublado.mp4
+python dublar.py --audio a.mp3                              # modo automatico (sem .srt)
+python dublar.py --audio a.mp3 --gen-srt                    # modo automatico + salva o .srt
+python dublar.py --audio a.mp3 --engine edge                # motor leve (Edge TTS)
+python dublar_yt.py --url "https://youtu.be/XXXX"           # baixa do YouTube e dubla
+python dublar_yt.py --url "..." --resolution 1080           # escolhe a resolucao
+python dublar_yt.py --url "..." --list-subs                 # lista as legendas do video
 ```
 
 ## Opcoes principais
@@ -40,10 +72,13 @@ python dublar.py --audio filme.mp4 --srt filme.srt          # gera filme_dublado
 | Opcao           | Descricao                                                        |
 |-----------------|------------------------------------------------------------------|
 | `--audio`       | Audio/video no idioma original (obrigatorio; suporta mp4, mkv...)|
-| `--srt`         | Legenda da traducao `.srt` (obrigatorio)                         |
+| `--srt`         | Legenda da traducao `.srt` (opcional). Omita para o modo automatico (detecta idioma + transcreve + traduz)|
+| `--whisper-model`| Modelo do Whisper no modo automatico: `tiny/base/small/medium/large-v3` (padrao: `small`)|
+| `--engine`      | Motor de voz: `chatterbox` (clonagem, padrao) ou `edge` (Edge TTS, leve)|
+| `--gen-srt`     | No modo automatico, salva o `.srt` gerado ao lado do audio      |
 | `--out`         | Saida `.mp3`/`.wav` ou `.mp4`/`.mkv` (padrao: `<audio>_dublado.mp3` ou `.mp4` se video)|
 | `--device`      | `cuda` ou `cpu` (padrao: cuda se disponivel)                     |
-| `--language`    | Idioma da fala (padrao: `pt`; pt, en, es, fr, de, it, zh, ja, ko)|
+| `--language`    | Idioma da fala e da traducao (padrao: `pt`; pt, en, es, fr, de, it, zh, ja, ko)|
 | `--temperature` | Aleatoriedade (menor = mais consistente; padrao: 0.8)            |
 | `--volume`      | Ganho da voz dublada (padrao: 1.0)                               |
 | `--seed`        | Semente base para reprodutibilidade (cada legenda usa seed+idx)  |
@@ -51,8 +86,24 @@ python dublar.py --audio filme.mp4 --srt filme.srt          # gera filme_dublado
 | `--keep-parts`  | Mantem os arquivos intermediarios da pasta de trabalho           |
 | `--emit-paths`  | Lista as amostras geradas e as mantem (usado pela GUI)           |
 
+### dublar_yt.py (YouTube)
+
+| Opcao           | Descricao                                                        |
+|-----------------|------------------------------------------------------------------|
+| `--url`         | Link do video do YouTube (obrigatorio)                           |
+| `--resolution`  | `best/144/240/360/480/720/1080` (padrao: `720`)                  |
+| `--language`    | Idioma de saida da dublagem e da traducao (padrao: `pt`)         |
+| `--whisper-model`| Modelo do Whisper usado quando nao ha legenda (padrao: `small`) |
+| `--engine`      | Motor de voz: `chatterbox` (padrao) ou `edge` (leve)             |
+| `--list-subs`   | So lista as legendas disponiveis e sai                           |
+| `--out`         | Saida `.mp4` (padrao: `<titulo>_dublado.mp4` na pasta atual)     |
+| `--cookies`     | Arquivo de cookies (formato Netscape) para evitar o HTTP 429     |
+| `--cookies-from-browser` | Usar cookies do navegador (edge, chrome, firefox...)  |
+
 ## Estrutura
 
 - `dublar.py` - motor de dublagem (CLI)
+- `dublar_yt.py` - baixa do YouTube e dubla (CLI)
 - `dublar_gui.py` - menu grafico (customtkinter)
+- `preview.py` - player em tempo real sincronizado com a geracao
 - `audio_para_dublar/` - pasta de exemplo
