@@ -99,7 +99,7 @@ def run_ffmpeg(args):
 
 def parse_srt(path):
     """Le um .srt e devolve lista de {index, start, end, text} em segundos."""
-    with open(path, "r", encoding="utf-8-sig") as f:
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as f:
         text = f.read()
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     ts_re = re.compile(
@@ -244,16 +244,16 @@ def convert_to_track_format(synth_wav, conv_wav, channels):
                 "-acodec", "pcm_s16le", conv_wav])
 
 
-def fit_to_duration(conv_wav, fitted_wav, seg_dur, channels):
-    """Estica/encolhe a sintese (rubberband) para ter a MESMA duracao da
+def fit_to_duration(conv_wav, fitted_wav, seg_dur, channels, max_tempo=2.0):
+    """Estica/encolhe a trilha (rubberband) para ter a MESMA duracao da
     fala original da legenda e depois corta/preenche para a duracao exata.
-    Trava o fator entre 0.5x e 2.0x para nao distorcer demais."""
+    Trava o fator entre 0.5x e max_tempo para nao distorcer demais."""
     data, sr = sf.read(conv_wav, dtype="float32", always_2d=True)
     cur = len(data) / sr
     target = max(seg_dur, 0.15)
     if cur <= 0.01:
         return conv_wav
-    tempo = min(max(cur / target, 0.5), 2.0)
+    tempo = min(max(cur / target, 0.5), max_tempo)
     if abs(tempo - 1.0) < 0.03:
         run_ffmpeg(["-i", conv_wav, "-ar", str(TARGET_SR), "-ac", str(channels),
                     "-acodec", "pcm_s16le", fitted_wav])
@@ -271,13 +271,21 @@ def fit_to_duration(conv_wav, fitted_wav, seg_dur, channels):
     return fitted_wav
 
 
-def load_track(audio_path, work_dir):
+def load_track(audio_path, work_dir, memmap=None):
     """Converte o audio original para WAV pcm_s16le (taxa padrao,
-    mantendo canais) e devolve (numpy float32, sr)."""
+    mantendo canais) e devolve (numpy float32, sr). Se `memmap` for True,
+    retorna um array espelhado em disco (np.memmap) no lugar de carregar
+    tudo em RAM - util para videos/filmes longos."""
     orig_wav = os.path.join(work_dir, "orig.wav")
     run_ffmpeg(["-i", audio_path, "-ar", str(TARGET_SR),
                 "-acodec", "pcm_s16le", orig_wav])
     data, sr = sf.read(orig_wav, dtype="float32", always_2d=True)
+    if memmap and data.nbytes > 256 * 1024 * 1024:
+        fpath = os.path.join(work_dir, "track.npy")
+        mm = np.memmap(fpath, dtype="float32", mode="w+", shape=data.shape)
+        mm[:] = data[:]
+        mm.flush()
+        return mm, sr
     return data, sr
 
 
@@ -302,10 +310,12 @@ def place_segment(track, start, synth_data, volume, fade_ms=FADE_MS):
     track[start_idx:start_idx + len(data)] += data * volume
 
 
-def build_silence_multiplier(entries, n_samples, sr, fade_ms=FADE_MS):
+def build_silence_multiplier(entries, n_samples, sr, fade_ms=FADE_MS, memmap_path=None):
     """Multiplicador para silenciar no audio ORIGINAL apenas as regioes
     que serao dubladas. Intervalos sobrepostos/colados sao fundidos e as
-    bordas recebem crossfade. 1.0 = mantem o original, 0.0 = silencio."""
+    bordas recebem crossfade. 1.0 = mantem o original, 0.0 = silencio.
+    Se `memmap_path` for dado, o multiplicador e alocado em disco (util
+    para arquivos muito longos, evitando duplicar a RAM)."""
     if not entries:
         return np.ones(n_samples, dtype=np.float32)
     iv = sorted((max(e["start"], 0.0), e["end"]) for e in entries)
@@ -315,7 +325,11 @@ def build_silence_multiplier(entries, n_samples, sr, fade_ms=FADE_MS):
             merged[-1] = (merged[-1][0], max(merged[-1][1], e))
         else:
             merged.append((s, e))
-    m = np.ones(n_samples, dtype=np.float32)
+    if memmap_path is not None:
+        m = np.memmap(memmap_path, dtype="float32", mode="w+", shape=(n_samples,))
+        m[:] = 1.0
+    else:
+        m = np.ones(n_samples, dtype=np.float32)
     f = max(int(round(fade_ms / 1000.0 * sr)), 1)
     for s, e in merged:
         si = min(int(round(s * sr)), n_samples - 1)
@@ -326,6 +340,8 @@ def build_silence_multiplier(entries, n_samples, sr, fade_ms=FADE_MS):
         m[si + f:ei - f] = 0.0
         m[si:si + f] *= np.linspace(1.0, 0.0, f, dtype=np.float32)
         m[ei - f:ei] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
+    if memmap_path is not None:
+        m.flush()
     return m
 
 
@@ -356,7 +372,7 @@ def cleanup_workdir(work_dir, keep_parts, emit_paths):
     com sucesso (mantem as amostras quando --emit-paths ou --keep-parts)."""
     if not os.path.isdir(work_dir):
         return
-    for name in ("orig.wav", "final.wav"):
+    for name in ("orig.wav", "final.wav", "track.npy", "silence.npy"):
         p = os.path.join(work_dir, name)
         if os.path.exists(p):
             try:
@@ -402,6 +418,11 @@ def main():
                     help="Aleatoriedade da fala (menor = voz mais consistente e "
                          "menos sussurro; maior = mais expressivo). Padrao: 0.8")
     ap.add_argument("--volume", type=float, default=1.0, help="Ganho da voz dublada (padrao: 1.0)")
+    ap.add_argument("--max-tempo", type=float, default=2.0,
+                    help="Limite do esticamento (rubberband) da voz dublada. "
+                         "Se a voz sintetizada for muito mais longa que a fala "
+                         "original, e cortada aqui e o restante vira silencio "
+                         "(padrao: 2.0).")
     ap.add_argument("--seed", type=int, default=None,
                     help="Semente base para reprodutibilidade. Padrao: 1000 "
                          "(cada legenda usa seed + indice)")
@@ -473,14 +494,18 @@ def main():
     print("=" * 60)
 
     print("\n[1/4] Preparando audio...")
-    track, sr = load_track(args.audio, work_dir)
+    track, sr = load_track(args.audio, work_dir, memmap=True)
+    using_mem = os.path.exists(os.path.join(work_dir, "track.npy"))
     channels = track.shape[1]
-    print(f"  duracao: {len(track) / sr:.1f}s | canais: {channels} | {TARGET_SR} Hz")
+    print(f"  duracao: {len(track) / sr:.1f}s | canais: {channels} | {TARGET_SR} Hz"
+          + (" | em disco (memmap)" if using_mem else ""))
 
     dub_entries = [e for e in entries if re.search(r"\w", e["text"])]
     if not dub_entries:
         sys.exit("[ERRO] Nenhuma legenda com texto para dublar no SRT.")
-    silence = build_silence_multiplier(dub_entries, len(track), TARGET_SR)
+    sil_path = os.path.join(work_dir, "silence.npy") if using_mem else None
+    silence = build_silence_multiplier(dub_entries, len(track), TARGET_SR,
+                                       memmap_path=sil_path)
     track *= silence[:, None]
 
     print("\n[2/4] Carregando motor (chatterbox)...")
@@ -489,6 +514,7 @@ def main():
     print(f"\n[3/4] Dublagem de {len(entries)} legendas...")
     done = 0
     skipped = 0
+    dub_total = len(dub_entries)
     for pos, e in enumerate(entries):
         i_disp = pos + 1
         n_tot = len(entries)
@@ -509,13 +535,15 @@ def main():
             synthesize_text(engine, text, ref_wav, synth_wav,
                             args.language, temperature=args.temperature, seed=seed)
             convert_to_track_format(synth_wav, conv_wav, channels)
-            final_seg = fit_to_duration(conv_wav, fitted_wav, end - start, channels)
+            final_seg = fit_to_duration(conv_wav, fitted_wav, end - start, channels,
+                                        max_tempo=args.max_tempo)
             data, _ = sf.read(final_seg, dtype="float32", always_2d=True)
             limit = int(round((end - start) * sr))
             if len(data) > limit:
                 data = data[:limit]
             place_segment(track, start, data, args.volume)
             done += 1
+            print(f"[PROGRESS] {done}/{dub_total}")
             if args.emit_paths:
                 print(f"[SEG] {e['index']}\t{os.path.abspath(final_seg)}\t{text[:70]}")
             if not args.keep_parts:
@@ -531,6 +559,8 @@ def main():
     if skipped:
         print(f"  {skipped} legendas ignoradas (sem texto).")
     final_wav = os.path.join(work_dir, "final.wav")
+    if using_mem:
+        track.flush()
     peak = float(np.max(np.abs(track))) if len(track) else 0.0
     if peak > 1.0:
         track *= (0.98 / peak)

@@ -32,7 +32,9 @@ SCRIPT = os.path.join(BASE_DIR, "dublar.py")
 PYTHON = sys.executable
 
 ctk.set_appearance_mode("light")
-ctk.set_default_color_theme(os.path.join(BASE_DIR, "dublador_theme.json"))
+_theme_path = os.path.join(BASE_DIR, "dublador_theme.json")
+if os.path.exists(_theme_path):
+    ctk.set_default_color_theme(_theme_path)
 
 DEVICES = ["auto", "cuda", "cpu"]
 LANGS = ["pt", "en", "es", "fr", "de", "it", "zh", "ja", "ko"]
@@ -64,6 +66,7 @@ class DublarGUI(ctk.CTk):
         self.var_samples = tk.BooleanVar(value=False)
         self.var_keep = tk.BooleanVar(value=False)
         self.var_seed = tk.StringVar(value="")
+        self.var_maxtempo = tk.StringVar(value="")
 
         self._build_ui()
 
@@ -150,6 +153,7 @@ class DublarGUI(ctk.CTk):
             ("Temperatura", self.var_temp),
             ("Volume", self.var_volume),
             ("Semente (opcional)", self.var_seed),
+            ("Max. esticamento", self.var_maxtempo),
         ]
         for i, (label, var) in enumerate(nums):
             c = i % 2
@@ -293,6 +297,12 @@ class DublarGUI(ctk.CTk):
         except ValueError:
             self.log(f"[AVISO] Semente invalida ('{self.var_seed.get()}') "
                      f"ignorada.\n")
+        try:
+            if self.var_maxtempo.get().strip():
+                cmd += ["--max-tempo", str(float(self.var_maxtempo.get()))]
+        except ValueError:
+            self.log(f"[AVISO] Max. esticamento invalido "
+                     f"('{self.var_maxtempo.get()}') ignorado (usando 2.0).\n")
         if self.var_dry.get():
             cmd.append("--dry-run")
         if self.var_samples.get():
@@ -356,13 +366,15 @@ class DublarGUI(ctk.CTk):
             p = psutil.Process(self.proc.pid)
             desc = p.children(recursive=True)
         except Exception:
+            p = None
             desc = []
         try:
             if not self.paused:
-                try:
-                    p.suspend()
-                except Exception:
-                    pass
+                if p is not None:
+                    try:
+                        p.suspend()
+                    except Exception:
+                        pass
                 for c in desc:
                     c.suspend()
                 self.paused = True
@@ -371,10 +383,11 @@ class DublarGUI(ctk.CTk):
             else:
                 for c in reversed(desc):
                     c.resume()
-                try:
-                    p.resume()
-                except Exception:
-                    pass
+                if p is not None:
+                    try:
+                        p.resume()
+                    except Exception:
+                        pass
                 self.paused = False
                 self.btn_pause.configure(text="Pausar")
                 self.log("[PAUSA] Dublagem retomada.\n")
@@ -425,7 +438,7 @@ class DublarGUI(ctk.CTk):
                 self.after(200, self.after, 0, lambda: self._flash("green"))
                 return
             self.log(item)
-            m = re.search(r"\[DUB\s+(\d+)/(\d+)\]", item)
+            m = re.search(r"\[PROGRESS\]\s+(\d+)/(\d+)", item)
             if m:
                 cur, total = int(m.group(1)), int(m.group(2))
                 pct = cur / max(total, 1)
