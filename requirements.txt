@@ -9,12 +9,15 @@
 chatterbox-tts==0.1.7
 
 # Audio
-numpy>=1.24,<2
+numpy>=1.24
 soundfile>=0.12
 
 # Interface grafica
 customtkinter>=5.2
 psutil>=5.9
+
+# Painel web (dublar_web.py + pasta static/)
+flask>=3.0
 
 # Modo automatico (sem .srt): transcricao + traducao
 faster-whisper>=1.1

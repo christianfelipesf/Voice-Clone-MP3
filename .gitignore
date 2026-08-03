@@ -182,3 +182,15 @@ cython_debug/
 
 audio_para_dublar/
 .dub_*/
+
+# Dublador web - dados gerados em runtime
+web_jobs/
+web_uploads/
+web_test_out.log
+web_test_err.log
+
+# Saidas de dublagem (arquivos grandes gerados)
+*_dublado.mp4
+*_dublado.mp3
+*_dublado.mkv
+*_dublado.wav

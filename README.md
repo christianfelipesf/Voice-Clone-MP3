@@ -32,6 +32,23 @@ cada trecho dublado pronto, ele entra na posicao correta da linha do tempo
 download de legendas por IP (HTTP 429); na GUI escolha o navegador em
 *"Cookies do navegador"* para evitar o bloqueio.
 
+**Painel web (dublar_web.py):** painel no navegador com visual leve
+(Pico.css) que roda o mesmo motor, com upload de arquivo pelo browser,
+modo YouTube, preview do video em tempo real (stream MPEG-TS + mpegts.js,
+sem precisar de ffplay) e o botao **"Modo PC fraco"** que ja aplica os
+ajustes para maquina sem GPU (`cpu` + `edge` + Whisper `tiny` + 360p +
+preview desligado). Para rodar:
+
+```
+python dublar_web.py                 # http://127.0.0.1:5050
+python dublar_web.py --port 8080     # porta personalizada
+```
+
+O preview usa o ffmpeg instalado no sistema: em builds modernos o video
+toca em tempo real enquanto dubla; em builds antigos (ex.: de 2013) o
+stream e entregue quando a dublagem termina, e mesmo assim o video
+dublado completo fica disponivel.
+
 ## Requisitos
 
 - Python 3.10+
@@ -105,5 +122,6 @@ python dublar_yt.py --url "..." --list-subs                 # lista as legendas 
 - `dublar.py` - motor de dublagem (CLI)
 - `dublar_yt.py` - baixa do YouTube e dubla (CLI)
 - `dublar_gui.py` - menu grafico (customtkinter)
-- `preview.py` - player em tempo real sincronizado com a geracao
+- `dublar_web.py` - painel web (Flask) + `static/` (frontend Pico.css/mpegts.js)
+- `preview.py` - player em tempo real sincronizado com a geracao (GUI e web)
 - `audio_para_dublar/` - pasta de exemplo

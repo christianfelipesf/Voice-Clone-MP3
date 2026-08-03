@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dublador Web</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <style>
+    :root { --pico-font-size: 100%; }
+    body { margin: 0; }
+    .app-header {
+      background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 55%, #4c1d95 100%);
+      color: #fff; padding: 1.4rem 1rem 1.3rem;
+      box-shadow: 0 2px 12px rgba(0,0,0,.18);
+    }
+    .app-inner {
+      max-width: 1080px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; flex-wrap: wrap;
+    }
+    .app-inner h1 {
+      margin: 0; color: #fff; font-size: 1.55rem; font-weight: 800;
+      letter-spacing: -.01em; line-height: 1.15;
+    }
+    .app-inner .sub {
+      margin: .35rem 0 0; color: rgba(255,255,255,.9);
+      font-size: .88rem; line-height: 1.4;
+    }
+    .app-badge {
+      display: flex; gap: .45rem; align-items: center; flex-wrap: wrap;
+    }
+    .pill {
+      background: rgba(255,255,255,.16); color: #fff;
+      font-size: .72rem; font-weight: 700; letter-spacing: .02em;
+      padding: .28rem .75rem; border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.3);
+      white-space: nowrap;
+    }
+    .pill.ok { background: rgba(34,197,94,.25); border-color: rgba(34,197,94,.5); }
+    .pill.err { background: rgba(239,68,68,.28); border-color: rgba(239,68,68,.55); }
+    main { max-width: 1080px; margin: 0 auto; padding: 1rem; }
+    .card { background: var(--pico-card-background-color, #fff);
+            border: 1px solid var(--pico-muted-border-color, #e5e7eb);
+            border-radius: .5rem; padding: 1rem; margin-bottom: 1rem; }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .6rem 1rem; }
+    .field-grid label { margin-bottom: .1rem; font-weight: 600; font-size: .82rem; }
+    .field-grid select, .field-grid input { margin-bottom: 0; }
+    #log {
+      background: #111827; color: #d1fae5; font-family: Consolas, monospace;
+      font-size: .8rem; border-radius: .5rem; padding: .75rem;
+      height: 260px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+      line-height: 1.45;
+    }
+    #preview-box video { width: 100%; max-height: 380px; background: #000; border-radius: .5rem; }
+    #samples .sample { display: flex; align-items: center; gap: .6rem; padding: .3rem 0; }
+    #samples audio { height: 32px; flex: 0 0 260px; }
+    #samples .s-text { font-size: .8rem; color: var(--pico-muted-color); overflow: hidden;
+                       text-overflow: ellipsis; white-space: nowrap; }
+    .row-btns { display: flex; gap: .6rem; flex-wrap: wrap; }
+    .muted { color: var(--pico-muted-color); font-size: .8rem; }
+    .badge { font-size: .75rem; font-weight: 700; padding: .15rem .55rem;
+             border-radius: 999px; background: #eef0ff; color: #5145d6; }
+    .badge.yt { background: #fdeaea; color: #c0392b; }
+    details summary { cursor: pointer; font-weight: 600; }
+    progress { width: 100%; }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-inner">
+      <div>
+        <h1>Dublador Web</h1>
+        <p class="sub">Dublagem de audio/video com clonagem de voz (Chatterbox) ou Edge TTS leve &middot; preview em tempo real &middot; feito para PC fraco</p>
+      </div>
+      <div class="app-badge">
+        <span class="pill" id="pill-ffmpeg">ffmpeg: ...</span>
+        <span class="pill" id="pill-preview">preview: ...</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div id="banner-ffmpeg" class="card" hidden>
+      <strong style="color:#b3261e">ffmpeg nao encontrado no PATH.</strong>
+      <span class="muted">Instale o ffmpeg e adicione-o ao PATH para dublar.</span>
+    </div>
+
+    <section class="card">
+      <h3>Entrada</h3>
+      <fieldset>
+        <label><input type="radio" name="mode" value="file" checked> Arquivo local (upload ou caminho no servidor)</label>
+        <label><input type="radio" name="mode" value="youtube"> YouTube (link)</label>
+      </fieldset>
+
+      <div id="mode-file">
+        <div class="grid">
+          <div>
+            <label for="file">Arquivo de audio/video <span class="muted">(mp3, wav, mp4, mkv...)</span></label>
+            <input type="file" id="file" accept=".mp3,.wav,.m4a,.flac,.ogg,.aac,.mp4,.mkv,.mov,.avi,.webm">
+          </div>
+          <div>
+            <label for="path">Ou caminho local no servidor <span class="muted">(opcional)</span></label>
+            <input type="text" id="path" placeholder="C:\videos\filme.mp4">
+          </div>
+        </div>
+        <div class="grid">
+          <div>
+            <label for="srt">Legenda .srt <span class="muted">(opcional; sem legenda usa Whisper)</span></label>
+            <input type="file" id="srt" accept=".srt">
+          </div>
+          <div></div>
+        </div>
+      </div>
+
+      <div id="mode-yt" hidden>
+        <div class="grid">
+          <div>
+            <label for="url">Link do YouTube</label>
+            <input type="url" id="url" placeholder="https://youtu.be/XXXX">
+          </div>
+          <div>
+            <label for="res">Resolucao</label>
+            <select id="res"></select>
+          </div>
+        </div>
+      </div>
+
+      <fieldset>
+        <label><input type="checkbox" id="preview" checked> Preview do video em tempo real (stream no navegador)</label>
+        <label><input type="checkbox" id="samples" checked> Amostras de audio por trecho</label>
+        <label><input type="checkbox" id="dry"> So listar legendas (dry-run)</label>
+      </fieldset>
+    </section>
+
+    <section class="card">
+      <h3>Opcoes</h3>
+      <div class="row-btns" style="margin-bottom:.8rem">
+        <button id="btn-weak" class="secondary" type="button" style="width:auto">Modo PC fraco (CPU + Edge TTS leve)</button>
+        <span class="muted" style="align-self:center">Reduz o uso do processador e evita download de modelos pesados.</span>
+      </div>
+      <div class="field-grid">
+        <div>
+          <label for="device">Dispositivo</label>
+          <select id="device"></select>
+        </div>
+        <div>
+          <label for="engine">Motor de dublagem</label>
+          <select id="engine"></select>
+        </div>
+        <div>
+          <label for="lang">Idioma de saida</label>
+          <select id="lang"></select>
+        </div>
+        <div>
+          <label for="whisper">Modelo Whisper (auto)</label>
+          <select id="whisper"></select>
+        </div>
+        <div>
+          <label for="volume">Volume</label>
+          <input type="number" id="volume" step="0.1" min="0.1" value="1.0">
+        </div>
+        <div>
+          <label for="temp">Temperatura <span class="muted">(vazio = padrao)</span></label>
+          <input type="number" id="temp" step="0.1" min="0" max="2" placeholder="0.8">
+        </div>
+        <div>
+          <label for="seed">Semente</label>
+          <input type="number" id="seed" step="1" placeholder="1000">
+        </div>
+        <div>
+          <label for="maxtempo">Max. esticamento</label>
+          <input type="number" id="maxtempo" step="0.1" min="0.5" max="4" placeholder="2.0">
+        </div>
+        <div>
+          <label for="cookies">Cookies do navegador (YouTube)</label>
+          <select id="cookies"></select>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row-btns" style="margin-bottom:.5rem">
+        <button id="btn-start">Iniciar Dublagem</button>
+        <button id="btn-pause" class="secondary" type="button" disabled>Pausar</button>
+        <button id="btn-stop" class="secondary" type="button" disabled>Parar</button>
+        <a id="btn-download" href="#" hidden><button class="contrast" type="button">Baixar resultado</button></a>
+      </div>
+      <div class="row-btns" style="align-items:center; margin-bottom:.6rem">
+        <progress id="progress" value="0" max="100" style="flex:1"></progress>
+        <span id="prog-label" class="muted">0%</span>
+      </div>
+      <p id="status" class="muted" style="min-height:1.2rem"></p>
+      <pre id="log"></pre>
+    </section>
+
+    <section class="card" id="preview-box" hidden>
+      <h3>Preview em tempo real</h3>
+      <video id="video" autoplay muted playsinline></video>
+      <p class="muted">O video espera enquanto um trecho esta sendo gerado; a parte dublada entra na posicao certa da linha do tempo.</p>
+    </section>
+
+    <section class="card" id="samples-box">
+      <h3>Amostras de audio</h3>
+      <div id="samples">
+        <p class="muted">Nenhuma amostra ainda. Inicie uma dublagem para ouvir cada trecho.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/mpegts.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
