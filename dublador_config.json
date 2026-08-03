@@ -1,12 +1,8 @@
 {
+  "engine": "chatterbox",
   "device": "auto",
   "lang": "pt",
   "res": "720",
   "whisper": "small",
-  "volume": "1.0",
-  "temp": "",
-  "seed": "",
-  "maxtempo": "",
-  "theme_dark": false,
-  "mode": "YouTube"
+  "preview": false
 }

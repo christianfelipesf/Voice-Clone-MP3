@@ -9,6 +9,7 @@
     progLabel: $("prog-label"), status: $("status"), log: $("log"),
     previewBox: $("preview-box"), video: $("video"), samples: $("samples"),
     modeFile: $("mode-file"), modeYt: $("mode-yt"), weak: $("btn-weak"),
+    strong: $("btn-strong"), reset: $("btn-reset"),
     device: $("device"), engine: $("engine"), lang: $("lang"), whisper: $("whisper"),
     res: $("res"), cookies: $("cookies"), volume: $("volume"), temp: $("temp"),
     seed: $("seed"), maxtempo: $("maxtempo"), file: $("file"), path: $("path"),
@@ -83,6 +84,8 @@
     });
 
     els.weak.addEventListener("click", applyWeakMode);
+    els.strong.addEventListener("click", applyStrongMode);
+    els.reset.addEventListener("click", applyReset);
   }
 
   // ------------------------------------------------------------------
@@ -90,10 +93,40 @@
     els.device.value = "cpu";
     els.engine.value = "edge";
     els.whisper.value = "tiny";
-    if (els.res) els.res.value = "360";
-    els.preview.checked = false;
-    appendLog("[INFO] Modo PC fraco aplicado: CPU + Edge TTS (leve) + Whisper tiny + 360p.\n");
+    appendLog("[INFO] Modo PC fraco aplicado: CPU + Edge TTS (leve) + Whisper tiny.\n");
     setStatus("Modo PC fraco aplicado. Clique em Iniciar Dublagem.");
+  }
+
+  function applyStrongMode() {
+    els.device.value = "auto";
+    els.engine.value = "chatterbox";
+    els.whisper.value = "small";
+    appendLog("[INFO] Modo PC forte aplicado: Chatterbox (clonagem de voz) + Whisper small.\n");
+    setStatus("Modo PC forte aplicado. Clique em Iniciar Dublagem.");
+  }
+
+  function applyReset() {
+    return fetch("/api/prefs/reset", { method: "POST" })
+      .then(function () { return apiInfo(); })
+      .then(function (info) {
+        var d = info.defaults;
+        fillSelect(els.device, info.devices, d.device);
+        fillSelect(els.engine, Object.keys(info.engines), d.engine);
+        fillSelect(els.lang, info.langs, d.lang);
+        fillSelect(els.whisper, info.whisper_models, d.whisper);
+        fillSelect(els.res, info.resolutions, d.res);
+        fillSelect(els.cookies, info.browsers, d.cookies);
+        if (d.volume) els.volume.value = d.volume; else els.volume.value = "1.0";
+        if (d.temp) els.temp.value = d.temp; else els.temp.value = "";
+        if (d.seed) els.seed.value = d.seed; else els.seed.value = "";
+        if (d.maxtempo) els.maxtempo.value = d.maxtempo; else els.maxtempo.value = "";
+        els.preview.checked = false;
+        appendLog("[INFO] Opcoes resetadas para os padroes (config limpo).\n");
+        setStatus("Opcoes resetadas.");
+      })
+      .catch(function () {
+        setStatus("Falha ao resetar as opcoes.");
+      });
   }
 
   function currentMode() {

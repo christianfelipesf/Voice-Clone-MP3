@@ -32,22 +32,25 @@ cada trecho dublado pronto, ele entra na posicao correta da linha do tempo
 download de legendas por IP (HTTP 429); na GUI escolha o navegador em
 *"Cookies do navegador"* para evitar o bloqueio.
 
-**Painel web (dublar_web.py):** painel no navegador com visual leve
-(Pico.css) que roda o mesmo motor, com upload de arquivo pelo browser,
-modo YouTube, preview do video em tempo real (stream MPEG-TS + mpegts.js,
-sem precisar de ffplay) e o botao **"Modo PC fraco"** que ja aplica os
-ajustes para maquina sem GPU (`cpu` + `edge` + Whisper `tiny` + 360p +
-preview desligado). Para rodar:
+**Painel web junto com a GUI:** ao abrir o menu grafico (`dub.bat` ou
+`python dublar_gui.py`), o servidor web sobe automaticamente em segundo
+plano. Basta clicar em **"Abrir painel web"** (no topo da janela) para abrir
+o navegador em `http://127.0.0.1:5000`. O servidor e encerrado sozinho ao
+fechar a GUI. Tambem roda de forma independente:
 
 ```
-python dublar_web.py                 # http://127.0.0.1:5050
+python dublar_web.py                 # http://127.0.0.1:5000
 python dublar_web.py --port 8080     # porta personalizada
 ```
 
-O preview usa o ffmpeg instalado no sistema: em builds modernos o video
-toca em tempo real enquanto dubla; em builds antigos (ex.: de 2013) o
-stream e entregue quando a dublagem termina, e mesmo assim o video
-dublado completo fica disponivel.
+O painel web tem visual leve (Pico.css) e roda o mesmo motor: upload de
+arquivo pelo browser, modo YouTube, preview do video em tempo real (stream
+MPEG-TS + mpegts.js, sem precisar de ffplay) e o botao **"Modo PC fraco"**
+que ja aplica os ajustes para maquina sem GPU (`cpu` + `edge` + Whisper
+`tiny` + 360p + preview desligado). O preview usa o ffmpeg instalado no
+sistema: em builds modernos o video toca em tempo real enquanto dubla; em
+builds antigos (ex.: de 2013) o stream e entregue quando a dublagem
+termina, e mesmo assim o video dublado completo fica disponivel.
 
 ## Requisitos
 
@@ -119,9 +122,19 @@ python dublar_yt.py --url "..." --list-subs                 # lista as legendas 
 
 ## Estrutura
 
-- `dublar.py` - motor de dublagem (CLI)
-- `dublar_yt.py` - baixa do YouTube e dubla (CLI)
-- `dublar_gui.py` - menu grafico (customtkinter)
-- `dublar_web.py` - painel web (Flask) + `static/` (frontend Pico.css/mpegts.js)
-- `preview.py` - player em tempo real sincronizado com a geracao (GUI e web)
-- `audio_para_dublar/` - pasta de exemplo
+O codigo e organizado no **pacote `dublador/`** (modular). Os scripts na
+raiz sao apenas "wrappers" finos que importam o pacote — os comandos
+antigos continuam iguais.
+
+```
+dublador/
+    __init__.py     - metadados do pacote
+    config.py       - constantes, caminhos e utilitarios compartilhados
+    core.py         - motor de dublagem (dublar.py)
+    youtube.py      - baixa do YouTube e dubla (dublar_yt.py)
+    preview.py      - player em tempo real (GUI e web)
+    web.py          - painel web Flask (create_app + WebServer embutivel)
+    gui.py          - menu grafico customtkinter (sobe o web server junto)
+static/             - frontend do painel web (Pico.css/mpegts.js)
+audio_para_dublar/  - pasta de exemplo
+```
