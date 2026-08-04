@@ -307,7 +307,7 @@ def run_dublar(video_path, srt_path, language, extra):
     if srt_path:
         cmd += ["--srt", srt_path]
     else:
-        cmd += ["--whisper-model", extra.get("whisper_model", "small")]
+        cmd += ["--whisper-model", extra.get("whisper_model", "distil-large-v3")]
     if extra.get("out"):
         cmd += ["--out", extra["out"]]
     for flag, val in (("--device", extra.get("device")),
@@ -359,11 +359,12 @@ def main():
     ap.add_argument("--volume", type=float, default=None)
     ap.add_argument("--max-tempo", type=float, default=None)
     ap.add_argument("--seed", type=int, default=None)
-    ap.add_argument("--whisper-model", default="small",
-                    help="Modelo do Whisper quando nao houver legenda (padrao: small)")
-    ap.add_argument("--engine", default="chatterbox",
-                    help="Motor de dublagem: chatterbox (clonagem, padrao) "
-                         "ou edge (Edge TTS, leve)")
+    ap.add_argument("--whisper-model", default="distil-large-v3",
+                    help="Modelo do Whisper quando nao houver legenda "
+                         "(padrao: distil-large-v3)")
+    ap.add_argument("--engine", default="edge",
+                    help="Motor de dublagem: edge (Edge TTS, leve, padrao) "
+                         "ou chatterbox (clonagem de voz, offline)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--keep-parts", action="store_true")
     ap.add_argument("--emit-paths", action="store_true")

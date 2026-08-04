@@ -14,7 +14,6 @@
       --accent-grad: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 55%, #5b21b6 100%);
       --start-grad: linear-gradient(90deg, #a78bfa, #7c3aed);
       --reset-grad: linear-gradient(90deg, #f472b6, #db2777);
-      --strong-grad: linear-gradient(90deg, #34d399, #059669);
     }
     body {
       margin: 0;
@@ -181,16 +180,6 @@
       background: var(--reset-grad) !important;
       border: none !important;
       box-shadow: 0 4px 14px rgba(219, 39, 119, .4);
-    }
-    #btn-weak,
-    #btn-strong {
-      background: rgba(255, 255, 255, .14) !important;
-      border: 1px solid rgba(255, 255, 255, .28) !important;
-    }
-    #btn-strong {
-      background: var(--strong-grad) !important;
-      border: none !important;
-      box-shadow: 0 4px 14px rgba(5, 150, 105, .4);
     }
     fieldset label { color: #ede9fe !important; }
     #status { color: rgba(245, 243, 255, .85) !important; min-height: 1.2rem; }
@@ -464,7 +453,7 @@
     <div class="app-inner">
       <div>
         <h1>Dublador Web</h1>
-        <p class="sub">Dublagem de audio/video com clonagem de voz (Chatterbox) ou Edge TTS leve &middot; preview em tempo real &middot; feito para PC fraco</p>
+        <p class="sub">Dublagem de audio/video &middot; motor padrao Edge TTS (rapido) ou Chatterbox (clonagem offline) &middot; preview em tempo real</p>
       </div>
       <div class="app-badge">
         <span class="pill" id="pill-ffmpeg">ffmpeg: ...</span>
@@ -587,11 +576,6 @@
 
     <section class="card">
       <h3>Opcoes</h3>
-      <div class="row-btns" style="margin-bottom:.8rem">
-        <button id="btn-weak" class="secondary btn-wide" type="button">Modo PC fraco (CPU + Edge TTS leve)</button>
-        <button id="btn-strong" class="secondary btn-wide" type="button">Modo PC forte (Chatterbox + qualidade alta)</button>
-        <span class="muted align-center">Presets rapidos. "PC fraco" reduz o uso do processador; "PC forte" usa Chatterbox com a melhor qualidade. Nao alteram resolucao nem preview.</span>
-      </div>
       <div class="field-grid">
         <div>
           <label for="device">Dispositivo</label>

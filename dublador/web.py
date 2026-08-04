@@ -8,7 +8,8 @@ Painel web que usa o motor do pacote (core/youtube):
 - Execucao em segundo plano com log, progresso e fases em tempo real (SSE)
 - Preview do VIDEO em tempo real (stream MPEG-TS + mpegts.js no navegador)
 - Amostras de audio por trecho e download do resultado
-- Opcoes para PC fraco (CPU, motor edge, Whisper tiny/base, baixa resolucao)
+- Opcoes avancadas (motor edge/chatterbox, modelos Whisper, resolucao etc.)
+- Padrao otimizado para velocidade: Edge TTS + Whisper distil-large-v3
 
 Reutilizavel:
     from dublador.web import create_app, WebServer

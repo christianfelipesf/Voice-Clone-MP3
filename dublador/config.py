@@ -27,11 +27,14 @@ JOBS_DIR = os.path.join(BASE_DIR, "web_jobs")
 
 DEVICES = ["auto", "cuda", "cpu"]
 LANGS = ["pt", "en", "es", "fr", "de", "it", "zh", "ja", "ko"]
-WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3"]
+# Modelos do faster-whisper. Os prefixos "distil-*" sao variantes destiladas
+# (~6x mais rapidas, ~1% WER a mais) treinadas a partir do large-v3.
+WHISPER_MODELS = ["distil-large-v3", "large-v3", "distil-medium.en",
+                  "medium", "small", "base", "tiny"]
 RESOLUTIONS = ["360", "720", "1080", "480", "240", "144", "best"]
 BROWSERS = ["", "edge", "chrome", "firefox", "brave", "opera"]
-ENGINE_LABELS = {"chatterbox": "Chatterbox (clonagem)",
-                 "edge": "Edge TTS (leve)"}
+ENGINE_LABELS = {"edge": "Edge TTS (leve, padrao)",
+                 "chatterbox": "Chatterbox (clonagem)"}
 
 PHASES = [
     ("Obtendo informacoes do video", "Obtendo informacoes..."),
@@ -58,8 +61,8 @@ DEFAULTS = {
     "device": "auto",
     "lang": "pt",
     "res": "720",
-    "whisper": "small",
-    "engine": "chatterbox",
+    "whisper": "distil-large-v3",
+    "engine": "edge",
     "volume": "1.0",
     "temp": "",
     "seed": "",

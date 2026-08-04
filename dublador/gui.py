@@ -85,11 +85,11 @@ class DublarGUI(ctk.CTk):
         self.var_device = tk.StringVar(value=cfg.get("device", "auto"))
         self.var_lang = tk.StringVar(value=cfg.get("lang", "pt"))
         self.var_res = tk.StringVar(value=cfg.get("res", "720"))
-        self.var_whisper = tk.StringVar(value=cfg.get("whisper", "small"))
+        self.var_whisper = tk.StringVar(value=cfg.get("whisper", DEFAULTS["whisper"]))
         self.var_srt = tk.StringVar(value="")
         self.var_cookies = tk.StringVar(value=cfg.get("cookies", ""))
         self.var_engine = tk.StringVar(
-            value=engine_to_label(cfg.get("engine", "chatterbox")))
+            value=engine_to_label(cfg.get("engine", DEFAULTS["engine"])))
         self.var_temp = tk.StringVar(value=cfg.get("temp", ""))
         self.var_volume = tk.StringVar(value=cfg.get("volume", "1.0"))
         self.var_seed = tk.StringVar(value=cfg.get("seed", ""))
@@ -282,21 +282,6 @@ class DublarGUI(ctk.CTk):
             side="left", padx=(4, 8))
         ctk.CTkComboBox(self.res_cell, variable=self.var_res, values=RESOLUTIONS,
                         width=140, state="readonly").pack(side="left")
-        row += 1
-
-        presets = ctk.CTkFrame(body, fg_color="transparent")
-        presets.grid(row=row, column=0, columnspan=3, sticky="w", padx=4, pady=(4, 0))
-        ctk.CTkButton(presets, text="PC fraco", width=100, height=28,
-                      font=ctk.CTkFont(size=12), fg_color="#8a8a8a",
-                      hover_color="#6f6f6f",
-                      command=self.apply_weak).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(presets, text="PC forte", width=100, height=28,
-                      font=ctk.CTkFont(size=12), fg_color="#1f8a4c",
-                      hover_color="#17693a",
-                      command=self.apply_strong).pack(side="left", padx=(0, 6))
-        ctk.CTkLabel(presets, text="Presets rapidos (tambem no painel web)",
-                     text_color="gray60", font=ctk.CTkFont(size=11)).pack(
-            side="left", padx=(10, 0))
         row += 1
         return row
 
@@ -510,18 +495,6 @@ class DublarGUI(ctk.CTk):
             self.adv.grid()
         else:
             self.adv.grid_remove()
-
-    def apply_weak(self):
-        self.var_device.set("cpu")
-        self.var_engine.set(self._engine_label("edge"))
-        self.var_whisper.set("tiny")
-        self.log("[PRESET] PC fraco: CPU + Edge TTS (leve) + Whisper tiny.\n")
-
-    def apply_strong(self):
-        self.var_device.set("auto")
-        self.var_engine.set(self._engine_label("chatterbox"))
-        self.var_whisper.set("small")
-        self.log("[PRESET] PC forte: Chatterbox (clonagem de voz) + Whisper small.\n")
 
     def reset_options(self):
         mapping = [(self.var_device, "device"), (self.var_lang, "lang"),

@@ -1,15 +1,20 @@
 # Dublador
 
-Dublagem com clonagem de voz usando o **Chatterbox Multilingual V3**
-(Resemble AI, licenca MIT, 100% offline). A voz dublada e esticada
-(rubberband) para ter a mesma duracao da fala original de cada legenda.
-Funciona com **audio (mp3/wav/...) e video (mp4/mkv/mov/avi/webm)** —
-no video a imagem e mantida e so o audio e substituido.
+Dublagem automatica de audio/video. A voz dublada e esticada (rubberband)
+para ter a mesma duracao da fala original de cada legenda. Funciona com
+**audio (mp3/wav/...) e video (mp4/mkv/mov/avi/webm)** — no video a
+imagem e mantida e so o audio e substituido.
 
-**Motores de voz:** você pode escolher entre
-- `chatterbox` (padrao) — clonagem de voz, 100% offline;
-- `edge` — **Edge TTS** (Microsoft, leve e rapido, online), sem clonagem,
-  usa uma voz neural padrao do idioma. Ideal para testes rapidos.
+**Motores de voz:** voce pode escolher entre
+- `edge` (**padrao**) — **Edge TTS** (Microsoft, leve e rapido, online),
+  sem clonagem, usa uma voz neural padrao do idioma;
+- `chatterbox` — **Chatterbox Multilingual V3** (Resemble AI, MIT, 100%
+  offline) com clonagem de voz a partir do audio original.
+
+A configuracao padrao prioriza velocidade: `edge` + Whisper
+`distil-large-v3` (~6x mais rapido que `small` com perda minima de
+qualidade, `int8` + `beam_size=1`). Para clonagem de voz, troque o motor
+para `chatterbox` na GUI/web.
 
 **Sem .srt?** Tambem funciona no **modo automatico**: o script detecta o
 idioma da midia, transcreve cada fala com timestamps (faster-whisper) e
@@ -45,19 +50,19 @@ python dublar_web.py --port 8080     # porta personalizada
 
 O painel web tem visual leve (Pico.css) e roda o mesmo motor: upload de
 arquivo pelo browser, modo YouTube, preview do video em tempo real (stream
-MPEG-TS + mpegts.js, sem precisar de ffplay) e o botao **"Modo PC fraco"**
-que ja aplica os ajustes para maquina sem GPU (`cpu` + `edge` + Whisper
-`tiny` + 360p + preview desligado). O preview usa o ffmpeg instalado no
-sistema: em builds modernos o video toca em tempo real enquanto dubla; em
-builds antigos (ex.: de 2013) o stream e entregue quando a dublagem
-termina, e mesmo assim o video dublado completo fica disponivel.
+MPEG-TS + mpegts.js, sem precisar de ffplay). O preview usa o ffmpeg
+instalado no sistema: em builds modernos o video toca em tempo real
+enquanto dubla; em builds antigos (ex.: de 2013) o stream e entregue
+quando a dublagem termina, e mesmo assim o video dublado completo fica
+disponivel.
 
 ## Requisitos
 
 - Python 3.10+
 - [ffmpeg](https://ffmpeg.org/download.html) instalado e no PATH
 - Dependencias: `pip install -r requirements.txt`
-  (primeira execucao baixa ~2 GB de pesos da HuggingFace + o modelo do Whisper)
+  (primeira execucao baixa ~2 GB de pesos da HuggingFace do Chatterbox;
+  com motor padrao `edge` nao baixa nada)
 
 ## Uso
 
@@ -81,7 +86,8 @@ python dublar.py --audio a.mp3 --srt a.srt --out a_dublado.mp3 --device cuda --v
 python dublar.py --audio filme.mp4 --srt filme.srt          # gera filme_dublado.mp4
 python dublar.py --audio a.mp3                              # modo automatico (sem .srt)
 python dublar.py --audio a.mp3 --gen-srt                    # modo automatico + salva o .srt
-python dublar.py --audio a.mp3 --engine edge                # motor leve (Edge TTS)
+python dublar.py --audio a.mp3 --engine chatterbox         # clonagem de voz (offline, mais pesado)
+python dublar.py --audio a.mp3 --whisper-model large-v3     # modo automatico mais preciso
 python dublar_yt.py --url "https://youtu.be/XXXX"           # baixa do YouTube e dubla
 python dublar_yt.py --url "..." --resolution 1080           # escolhe a resolucao
 python dublar_yt.py --url "..." --list-subs                 # lista as legendas do video
@@ -93,8 +99,8 @@ python dublar_yt.py --url "..." --list-subs                 # lista as legendas 
 |-----------------|------------------------------------------------------------------|
 | `--audio`       | Audio/video no idioma original (obrigatorio; suporta mp4, mkv...)|
 | `--srt`         | Legenda da traducao `.srt` (opcional). Omita para o modo automatico (detecta idioma + transcreve + traduz)|
-| `--whisper-model`| Modelo do Whisper no modo automatico: `tiny/base/small/medium/large-v3` (padrao: `small`)|
-| `--engine`      | Motor de voz: `chatterbox` (clonagem, padrao) ou `edge` (Edge TTS, leve)|
+| `--whisper-model`| Modelo do Whisper no modo automatico: `tiny/base/small/medium/large-v3/distil-large-v3/distil-medium.en` (padrao: `distil-large-v3`)|
+| `--engine`      | Motor de voz: `edge` (Edge TTS, leve, padrao) ou `chatterbox` (clonagem, offline)|
 | `--gen-srt`     | No modo automatico, salva o `.srt` gerado ao lado do audio      |
 | `--out`         | Saida `.mp3`/`.wav` ou `.mp4`/`.mkv` (padrao: `<audio>_dublado.mp3` ou `.mp4` se video)|
 | `--device`      | `cuda` ou `cpu` (padrao: cuda se disponivel)                     |
@@ -113,8 +119,8 @@ python dublar_yt.py --url "..." --list-subs                 # lista as legendas 
 | `--url`         | Link do video do YouTube (obrigatorio)                           |
 | `--resolution`  | `best/144/240/360/480/720/1080` (padrao: `720`)                  |
 | `--language`    | Idioma de saida da dublagem e da traducao (padrao: `pt`)         |
-| `--whisper-model`| Modelo do Whisper usado quando nao ha legenda (padrao: `small`) |
-| `--engine`      | Motor de voz: `chatterbox` (padrao) ou `edge` (leve)             |
+| `--whisper-model`| Modelo do Whisper usado quando nao ha legenda (padrao: `distil-large-v3`) |
+| `--engine`      | Motor de voz: `edge` (Edge TTS, padrao) ou `chatterbox` (clonagem) |
 | `--list-subs`   | So lista as legendas disponiveis e sai                           |
 | `--out`         | Saida `.mp4` (padrao: `<titulo>_dublado.mp4` na pasta atual)     |
 | `--cookies`     | Arquivo de cookies (formato Netscape) para evitar o HTTP 429     |

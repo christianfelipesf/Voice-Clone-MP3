@@ -14,8 +14,8 @@
     previewStatusSub: $("preview-status-sub"),
     previewStatusBar: $("preview-status-bar"),
     samples: $("samples"),
-    modeFile: $("mode-file"), modeYt: $("mode-yt"), weak: $("btn-weak"),
-    strong: $("btn-strong"), reset: $("btn-reset"),
+    modeFile: $("mode-file"), modeYt: $("mode-yt"),
+    reset: $("btn-reset"),
     device: $("device"), engine: $("engine"), lang: $("lang"), whisper: $("whisper"),
     parallel: $("parallel"), whisperBeam: $("whisper-beam"),
     res: $("res"), cookies: $("cookies"),
@@ -133,24 +133,6 @@
     hidePreviewControls();
     jobId = null;
     try { localStorage.removeItem("dublador_last_job_id"); } catch (e) {}
-  }
-
-  function applyWeakMode() {
-    if (els.device) els.device.value = "cpu";
-    if (els.engine) els.engine.value = "edge";
-    if (els.whisper) els.whisper.value = "tiny";
-    if (els.parallel) els.parallel.value = "1";
-    appendLog("[INFO] Modo PC fraco aplicado: CPU + Edge TTS (leve) + Whisper tiny.\n");
-    setStatus("Modo PC fraco aplicado. Clique em Iniciar Dublagem.");
-  }
-
-  function applyStrongMode() {
-    if (els.device) els.device.value = "auto";
-    if (els.engine) els.engine.value = "chatterbox";
-    if (els.whisper) els.whisper.value = "small";
-    if (els.parallel) els.parallel.value = "2";
-    appendLog("[INFO] Modo PC forte aplicado: Chatterbox (clonagem de voz) + Whisper small + paralelismo 2.\n");
-    setStatus("Modo PC forte aplicado. Clique em Iniciar Dublagem.");
   }
 
   function applyReset() {

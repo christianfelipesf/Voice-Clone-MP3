@@ -211,21 +211,29 @@ def translate_text(text, target="pt", retries=3):
     return text
 
 
-def transcribe_entries(audio_path, model_size="small", device="cpu",
+def transcribe_entries(audio_path, model_size="distil-large-v3", device="cpu",
                        target_lang="pt", beam_size=None):
     """Transcreve a midia com faster-whisper (detecta o idioma sozinho),
     traduz cada fala para `target_lang` e devolve a lista de legendas no
     mesmo formato do parse_srt.
 
-    `beam_size` adaptativo: 1 em CPU + tiny/base (3-5x mais rapido),
-    3 em CPU + small+, 5 em CUDA. Aceita override explicito."""
+    Modelos `distil-*` sao variantes destiladas (~6x mais rapidas que
+    `large-v3`, ~1% WER a mais); usamos `int8` + `beam_size=1` para extrair
+    velocidade maxima mesmo em CPU.
+
+    `beam_size` adaptativo: 1 para distil-* ou tiny/base em CPU, 3 para
+    small+ em CPU, 5 em CUDA. Aceita override explicito."""
     print(f"  Carregando Whisper ({model_size}, {device})...")
     from faster_whisper import WhisperModel
-    compute = "float16" if device == "cuda" else "int8"
+    is_distil = model_size.startswith("distil-")
+    if device == "cuda":
+        compute = "float16"
+    else:
+        compute = "int8"
     if beam_size is None:
         if device == "cuda":
             beam_size = 5
-        elif model_size in ("tiny", "base"):
+        elif is_distil or model_size in ("tiny", "base"):
             beam_size = 1
         else:
             beam_size = 3
@@ -594,7 +602,8 @@ def main():
     force_utf8_stdout()
     ap = argparse.ArgumentParser(
         description="Dublador - dubla audio (ou video mantendo a imagem) com "
-                    "clonagem de voz offline (motor: Chatterbox Multilingual V3)",
+                    "transcricao rapida (faster-whisper distil-large-v3) e "
+                    "sintese via Edge TTS (padrao) ou Chatterbox Multilingual V3",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Exemplo:\n"
@@ -612,16 +621,17 @@ def main():
                     help="Legenda da traducao (.srt). Omita para o modo "
                          "automatico: detecta o idioma da midia, transcreve "
                          "com Whisper e traduz para o idioma de saida")
-    ap.add_argument("--whisper-model", default="small",
+    ap.add_argument("--whisper-model", default="distil-large-v3",
                     help="Modelo do Whisper para o modo automatico "
-                         "(tiny/base/small/medium/large-v3; padrao: small)")
+                         "(tiny/base/small/medium/large-v3/distil-large-v3/"
+                         "distil-medium.en; padrao: distil-large-v3)")
     ap.add_argument("--whisper-beam", type=int, default=None,
                     help="beam_size do Whisper (padrao adaptativo: 1 p/ "
-                         "tiny/base em CPU, 3 p/ small+ em CPU, 5 em CUDA)")
-    ap.add_argument("--engine", default="chatterbox",
-                    help="Motor de dublagem: chatterbox (clonagem de voz, "
-                         "offline, padrao) ou edge (Edge TTS, leve, online, "
-                         "sem clonagem)")
+                         "distil-* e tiny/base em CPU, 3 p/ small+ em CPU, "
+                         "5 em CUDA)")
+    ap.add_argument("--engine", default="edge",
+                    help="Motor de dublagem: edge (Edge TTS, leve, online, "
+                         "padrao) ou chatterbox (clonagem de voz, offline)")
     ap.add_argument("--gen-srt", action="store_true",
                     help="No modo automatico, salva o .srt gerado ao lado do audio")
     ap.add_argument("--out", default=None,
@@ -745,6 +755,10 @@ def main():
     print(f"  Motor: {'Edge TTS (leve)' if args.engine == 'edge' else 'Chatterbox Multilingual V3'}   "
           f"Idio: {args.language}   "
           f"Device: {args.device if args.engine != 'edge' else 'n/a'}")
+    if args.engine == "edge":
+        print("  [INFO] Motor padrao (Edge TTS): leve, online, sem clonagem de voz.")
+    else:
+        print("  [INFO] Motor Chatterbox: clonagem de voz offline (mais lento).")
     print("  Voz dublada esticada para a mesma duracao da fala original")
     print("=" * 60)
 
