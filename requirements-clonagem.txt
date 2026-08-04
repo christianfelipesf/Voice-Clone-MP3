@@ -1,0 +1,12 @@
+# Dublador - clonagem de voz (OPCIONAL e pesado)
+#
+# Chatterbox Multilingual V3 (MIT, 100% offline). So instale se for
+# usar clonagem de voz (engine "chatterbox"). O pacote puxa torch,
+# transformers e spacy-pkuseg, que exige compilador C++ (MSVC) no
+# Windows e demora bastante. Se nao precisar, ignore este arquivo e
+# use o motor leve (--engine edge), que funciona sem ele.
+#
+# Instalacao:
+#   pip install -r requirements-clonagem.txt
+#
+chatterbox-tts==0.1.7

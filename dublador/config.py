@@ -104,6 +104,33 @@ def force_utf8_stdout():
             pass
 
 
+def ensure_pkg(module, pkg=None, hint=""):
+    """Importa `module`; se nao estiver instalado, instala o pacote `pkg`
+    (padrao: o proprio nome) via pip no Python atual e tenta de novo.
+    Instala SO o que esta faltando para o passo atual - nada de
+    requirements.txt gigante. Retorna o modulo importado."""
+    import importlib
+    try:
+        return importlib.import_module(module)
+    except ImportError:
+        pass
+    if pkg is None:
+        pkg = module
+    print(f"[DEP] Instalando dependencia: {pkg} ...")
+    r = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+         pkg],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        tail = (r.stderr or "").strip().splitlines()
+        raise ImportError(
+            f"Falha ao instalar '{pkg}'. Instale manualmente: "
+            f"pip install {pkg}"
+            + (f"\n  Motivo: {tail[-1][:400]}" if tail else "")
+            + (f"\n  {hint}" if hint else ""))
+    return importlib.import_module(module)
+
+
 def load_config():
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:

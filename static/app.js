@@ -21,7 +21,7 @@
     res: $("res"), cookies: $("cookies"),
     volume: $("volume"), temp: $("temp"),
     seed: $("seed"), maxtempo: $("maxtempo"), file: $("file"), path: $("path"),
-    srt: $("srt"), url: $("url"), preview: $("preview"), samplesChk: $("samples"),
+    srt: $("srt"), url: $("url"), preview: $("preview"), samplesChk: $("samples-chk"),
     dry: $("dry"), pillFfmpeg: $("pill-ffmpeg"), pillPreview: $("pill-preview"),
     qsGo: $("qs-go"), qsUrl: $("qs-url"), qsRes: $("qs-res"),
     qsStatus: $("qs-status"),
@@ -99,7 +99,8 @@
   }
 
   function currentMode() {
-    return "youtube";
+    var r = document.querySelector('input[name="mode"]:checked');
+    return r ? r.value : "file";
   }
 
   function appendLog(line) {
@@ -196,6 +197,20 @@
     return fd;
   }
 
+  function qsStart() {
+    var yt = document.querySelector('input[name="mode"][value="youtube"]');
+    if (yt) yt.checked = true;
+    if (els.modeYt) els.modeYt.hidden = false;
+    if (els.modeFile) els.modeFile.hidden = true;
+    if (els.url && els.qsUrl && els.qsUrl.value.trim()) {
+      els.url.value = els.qsUrl.value.trim();
+    }
+    if (els.res && els.qsRes && els.qsRes.value) {
+      els.res.value = els.qsRes.value;
+    }
+    startJob();
+  }
+
   function startJob() {
     console.log("[qs] startJob clicado, running=", running);
     if (running) { setStatus("Ja existe uma dublagem em andamento."); return; }
@@ -290,6 +305,7 @@
         showPreviewActive();
         break;
       case "preview_start": startPreview(d.url); break;
+      case "preview_restart": restartPreview(d.url); break;
       case "status": finalize(d.status, d.error); break;
     }
   }
@@ -411,6 +427,13 @@
     }
   }
 
+  // Reinicia o player quando o backend troca da fase 1 (video original)
+  // para a fase 2 (timeline dublada), no primeiro trecho pronto.
+  function restartPreview(url) {
+    if (player) { try { player.destroy(); } catch (e) {} player = null; }
+    startPreview(url, 0);
+  }
+
   function addSample(seg) {
     if (!els.samples) return;
     var empty = els.samples.querySelector("p.muted");
@@ -514,15 +537,21 @@
       }
     });
 
+    document.querySelectorAll('input[name="mode"]').forEach(function (r) {
+      r.addEventListener("change", function () {
+        var yt = r.value === "youtube";
+        if (els.modeYt) els.modeYt.hidden = !yt;
+        if (els.modeFile) els.modeFile.hidden = yt;
+      });
+    });
+
     if (els.start) els.start.addEventListener("click", startJob);
-    if (els.qsGo) els.qsGo.addEventListener("click", startJob);
+    if (els.qsGo) els.qsGo.addEventListener("click", qsStart);
     if (els.pause) els.pause.addEventListener("click", togglePause);
     if (els.stop) els.stop.addEventListener("click", stopJob);
     if (els.download) els.download.addEventListener("click", function (e) {
       if (jobId) { e.preventDefault(); window.location.href = "/api/jobs/" + jobId + "/output"; }
     });
-    if (els.weak) els.weak.addEventListener("click", applyWeakMode);
-    if (els.strong) els.strong.addEventListener("click", applyStrongMode);
     if (els.reset) els.reset.addEventListener("click", applyReset);
 
     if (els.pcMute) {

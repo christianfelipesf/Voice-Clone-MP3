@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="pt-BR" data-theme="dark">
+<html lang="pt-BR" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,39 +8,32 @@
   <style>
     :root {
       --pico-font-size: 100%;
-      --bg-grad: linear-gradient(160deg,
-        #1e1b4b 0%, #3b0764 25%, #6b21a8 50%,
-        #7c3aed 75%, #1e1b4b 100%);
-      --accent-grad: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 55%, #5b21b6 100%);
       --start-grad: linear-gradient(90deg, #a78bfa, #7c3aed);
       --reset-grad: linear-gradient(90deg, #f472b6, #db2777);
+      --glass: rgba(255, 255, 255, .65);
+      --glass-border: rgba(124, 58, 237, .18);
+      --text: #2b2350;
+      --text-soft: rgba(43, 35, 80, .68);
     }
     body {
       margin: 0;
       min-height: 100vh;
-      background: var(--bg-grad);
-      background-size: 220% 220%;
+      background:
+        radial-gradient(42% 34% at 82% 12%, rgba(196, 181, 253, .35), transparent 70%),
+        radial-gradient(38% 30% at 12% 88%, rgba(221, 214, 254, .45), transparent 70%),
+        #f5f3ff;
       background-attachment: fixed;
-      animation: bg-shift 22s ease-in-out infinite;
-      color: #f5f3ff;
+      color: var(--text);
       overflow-x: hidden;
     }
-    @keyframes bg-shift {
-      0%   { background-position: 0% 50%; }
-      25%  { background-position: 50% 0%; }
-      50%  { background-position: 100% 50%; }
-      75%  { background-position: 50% 100%; }
-      100% { background-position: 0% 50%; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      body { animation: none; }
-    }
     .app-header {
-      background: var(--accent-grad);
-      color: #fff;
+      background: rgba(255, 255, 255, .6);
+      backdrop-filter: blur(16px) saturate(1.4);
+      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+      color: var(--text);
       padding: 1.4rem 1rem 1.3rem;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, .35);
-      border-bottom: 1px solid rgba(255, 255, 255, .18);
+      box-shadow: 0 4px 24px rgba(124, 58, 237, .1);
+      border-bottom: 1px solid var(--glass-border);
     }
     .app-inner {
       max-width: 1080px;
@@ -53,69 +46,68 @@
     }
     .app-inner h1 {
       margin: 0;
-      color: #fff;
+      color: var(--text);
       font-size: 1.55rem;
       font-weight: 800;
       letter-spacing: -.01em;
       line-height: 1.15;
-      text-shadow: 0 2px 10px rgba(0, 0, 0, .25);
     }
     .app-inner .sub {
       margin: .35rem 0 0;
-      color: rgba(255, 255, 255, .92);
+      color: var(--text-soft);
       font-size: .88rem;
       line-height: 1.4;
     }
     .app-badge { display: flex; gap: .45rem; align-items: center; flex-wrap: wrap; }
     .pill {
-      background: rgba(255, 255, 255, .16);
-      color: #fff;
+      background: rgba(124, 58, 237, .1);
+      color: var(--text);
       font-size: .72rem;
       font-weight: 700;
       letter-spacing: .02em;
       padding: .28rem .75rem;
       border-radius: 999px;
-      border: 1px solid rgba(255, 255, 255, .35);
+      border: 1px solid var(--glass-border);
       white-space: nowrap;
-      backdrop-filter: blur(6px);
+      backdrop-filter: blur(8px);
     }
-    .pill.ok { background: rgba(34, 197, 94, .35); border-color: rgba(34, 197, 94, .55); }
-    .pill.err { background: rgba(239, 68, 68, .4); border-color: rgba(239, 68, 68, .6); }
+    .pill.ok { background: rgba(34, 197, 94, .16); border-color: rgba(34, 197, 94, .4); }
+    .pill.err { background: rgba(239, 68, 68, .16); border-color: rgba(239, 68, 68, .4); }
     main { max-width: 1080px; margin: 0 auto; padding: 1rem; }
     .card {
-      background: rgba(255, 255, 255, .08);
-      border: 1px solid rgba(255, 255, 255, .16);
-      border-radius: .9rem;
+      background: var(--glass);
+      border: 1px solid var(--glass-border);
+      border-radius: 1.1rem;
       padding: 1rem;
       margin-bottom: 1rem;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 6px 24px rgba(0, 0, 0, .22);
+      backdrop-filter: blur(18px) saturate(1.5);
+      -webkit-backdrop-filter: blur(18px) saturate(1.5);
+      box-shadow: 0 8px 32px rgba(124, 58, 237, .1),
+                  inset 0 1px 0 rgba(255, 255, 255, .6);
     }
     .card h3 {
-      color: #fff;
+      color: var(--text);
       margin-top: 0;
       font-weight: 700;
-      text-shadow: 0 1px 4px rgba(0, 0, 0, .2);
     }
     .card label,
-    .card .field-grid label { color: #ede9fe; }
+    .card .field-grid label { color: var(--text); }
     .card input[type=text],
     .card input[type=url],
     .card input[type=number],
     .card select {
-      background-color: rgba(0, 0, 0, .28);
-      color: #fff;
-      border: 1px solid rgba(255, 255, 255, .22);
-      border-radius: .5rem;
+      background-color: rgba(255, 255, 255, .8);
+      color: var(--text);
+      border: 1px solid var(--glass-border);
+      border-radius: .6rem;
     }
-    .card select {
-      filter: invert(1) hue-rotate(180deg) brightness(1.05);
+    .card input:focus,
+    .card select:focus {
+      border-color: rgba(124, 58, 237, .6);
+      box-shadow: 0 0 0 3px rgba(124, 58, 237, .18);
     }
-    .card select option {
-      background: #2a1f5d;
-      color: #fff;
-    }
-    .card input::placeholder { color: rgba(255, 255, 255, .5); }
+    .card select option { background: #fff; color: var(--text); }
+    .card input::placeholder { color: rgba(43, 35, 80, .4); }
     .field-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -129,18 +121,18 @@
     .field-grid select,
     .field-grid input { margin-bottom: 0; }
     #log {
-      background: rgba(0, 0, 0, .4);
-      color: #d1fae5;
+      background: rgba(255, 255, 255, .7);
+      color: #334155;
       font-family: Consolas, monospace;
       font-size: .8rem;
-      border-radius: .5rem;
+      border-radius: .6rem;
       padding: .75rem;
       height: 240px;
       overflow-y: auto;
       white-space: pre-wrap;
       word-break: break-word;
       line-height: 1.45;
-      border: 1px solid rgba(255, 255, 255, .12);
+      border: 1px solid var(--glass-border);
     }
     #samples .sample {
       display: flex;
@@ -151,40 +143,49 @@
     #samples audio { height: 32px; flex: 0 0 260px; }
     #samples .s-text {
       font-size: .8rem;
-      color: rgba(245, 243, 255, .8);
+      color: var(--text-soft);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .row-btns { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
-    .muted { color: rgba(245, 243, 255, .7); font-size: .8rem; }
+    .muted { color: var(--text-soft); font-size: .8rem; }
     details summary { cursor: pointer; font-weight: 600; }
     progress { width: 100%; }
-    progress::-webkit-progress-bar { background: rgba(255, 255, 255, .15); border-radius: 999px; }
+    progress::-webkit-progress-bar { background: rgba(124, 58, 237, .12); border-radius: 999px; }
     progress::-webkit-progress-value { background: linear-gradient(90deg, #a78bfa, #7c3aed); border-radius: 999px; }
     button {
-      border-radius: .65rem !important;
+      border-radius: .7rem !important;
       font-weight: 600 !important;
       min-height: 2.8rem;
       padding: 0 1.1rem;
       transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
     }
-    button:hover { transform: translateY(-1px); filter: brightness(1.08); }
+    button:hover { transform: translateY(-1px); filter: brightness(1.04); }
     button:disabled { opacity: .5; cursor: not-allowed; }
+    button.secondary {
+      background: rgba(124, 58, 237, .1) !important;
+      border: 1px solid var(--glass-border) !important;
+      color: var(--text) !important;
+    }
+    button.contrast {
+      background: var(--reset-grad) !important;
+      border: none !important;
+    }
     #btn-start {
       background: var(--start-grad) !important;
       border: none !important;
-      box-shadow: 0 4px 14px rgba(124, 58, 237, .5);
+      box-shadow: 0 4px 14px rgba(124, 58, 237, .35);
     }
     #btn-reset {
       background: var(--reset-grad) !important;
       border: none !important;
-      box-shadow: 0 4px 14px rgba(219, 39, 119, .4);
+      box-shadow: 0 4px 14px rgba(219, 39, 119, .3);
     }
-    fieldset label { color: #ede9fe !important; }
-    #status { color: rgba(245, 243, 255, .85) !important; min-height: 1.2rem; }
+    fieldset label { color: var(--text) !important; }
+    #status { color: var(--text-soft) !important; min-height: 1.2rem; }
     .app-inner .sub,
-    .card .muted { color: rgba(245, 243, 255, .72); }
+    .card .muted { color: var(--text-soft); }
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -216,7 +217,7 @@
       display: block;
     }
     .preview-placeholder {
-      color: rgba(245, 243, 255, .55);
+      color: var(--text-soft);
       text-align: center;
       padding: 1.5rem;
       display: flex;
@@ -228,8 +229,8 @@
       width: 64px;
       height: 64px;
       border-radius: 50%;
-      background: rgba(255, 255, 255, .08);
-      border: 1px solid rgba(255, 255, 255, .18);
+      background: rgba(124, 58, 237, .1);
+      border: 1px solid var(--glass-border);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -237,7 +238,7 @@
     .preview-placeholder .ph-title {
       font-weight: 700;
       font-size: 1rem;
-      color: rgba(245, 243, 255, .85);
+      color: var(--text);
     }
     .preview-placeholder .ph-sub {
       font-size: .82rem;
@@ -252,9 +253,9 @@
       align-items: center;
       justify-content: center;
       gap: .9rem;
-      color: rgba(245, 243, 255, .92);
-      background: linear-gradient(160deg, rgba(30, 27, 75, .78) 0%, rgba(107, 33, 168, .78) 100%);
-      backdrop-filter: blur(6px);
+      color: var(--text);
+      background: rgba(245, 243, 255, .72);
+      backdrop-filter: blur(10px);
       z-index: 3;
       padding: 1.5rem;
       text-align: center;
@@ -264,62 +265,27 @@
       font-size: clamp(1.6rem, 3vw, 2.6rem);
       font-weight: 800;
       letter-spacing: -.01em;
-      text-shadow: 0 2px 14px rgba(0, 0, 0, .45);
       line-height: 1.15;
     }
     .preview-status .ps-sub {
       font-size: clamp(.95rem, 1.4vw, 1.15rem);
-      color: rgba(245, 243, 255, .8);
+      color: var(--text-soft);
       line-height: 1.4;
       max-width: 520px;
-    }
-    .preview-controls {
-      position: absolute;
-      left: 12px;
-      bottom: 12px;
-      display: flex;
-      gap: .5rem;
-      align-items: center;
-      padding: .4rem .6rem;
-      background: rgba(15, 12, 41, .72);
-      border: 1px solid rgba(255, 255, 255, .18);
-      border-radius: 999px;
-      backdrop-filter: blur(8px);
-      z-index: 4;
-    }
-    .preview-controls .pc-btn {
-      width: 36px;
-      height: 36px;
-      min-height: 36px;
-      padding: 0;
-      border-radius: 50% !important;
-      background: rgba(255, 255, 255, .12) !important;
-      border: 1px solid rgba(255, 255, 255, .22) !important;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .preview-controls .pc-btn:hover { background: rgba(124, 58, 237, .5) !important; }
-    .preview-controls .pc-volume {
-      width: 110px;
-      height: 4px;
-      accent-color: #a78bfa;
-      cursor: pointer;
     }
     .preview-status .ps-spinner {
       width: 56px;
       height: 56px;
       border-radius: 50%;
-      border: 4px solid rgba(255, 255, 255, .2);
-      border-top-color: #a78bfa;
+      border: 4px solid rgba(124, 58, 237, .15);
+      border-top-color: #7c3aed;
       animation: ps-spin .9s linear infinite;
     }
     .preview-status .ps-bar {
       width: min(420px, 80%);
       height: 8px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, .15);
+      background: rgba(124, 58, 237, .15);
       overflow: hidden;
       margin-top: .4rem;
     }
@@ -333,8 +299,8 @@
     @keyframes ps-spin { to { transform: rotate(360deg); } }
     .preview-caption {
       padding: .8rem 1rem;
-      border-top: 1px solid rgba(255, 255, 255, .12);
-      color: rgba(245, 243, 255, .72);
+      border-top: 1px solid var(--glass-border);
+      color: var(--text-soft);
       font-size: .82rem;
     }
     /* Quick Start (compacto, em cima do preview) */
@@ -353,16 +319,17 @@
       margin: 0;
       padding: .35rem .6rem;
       border-radius: .55rem;
-      border: 1px solid rgba(255, 255, 255, .22);
-      background: rgba(0, 0, 0, .2);
+      border: 1px solid var(--glass-border);
+      background: rgba(255, 255, 255, .6);
       cursor: pointer;
       font-size: .82rem;
       font-weight: 600;
+      color: var(--text);
     }
     .quickstart .modes input[type=radio] { margin-right: .25rem; vertical-align: middle; }
     .quickstart .modes label:has(input:checked) {
-      background: rgba(124, 58, 237, .35);
-      border-color: rgba(167, 139, 250, .55);
+      background: rgba(124, 58, 237, .15);
+      border-color: rgba(124, 58, 237, .5);
     }
     .quickstart .qs-field { margin: 0; }
     .quickstart .qs-field label {
@@ -371,39 +338,38 @@
       font-weight: 700;
       letter-spacing: .04em;
       text-transform: uppercase;
-      color: rgba(245, 243, 255, .65);
+      color: var(--text-soft);
       margin-bottom: .2rem;
     }
     .quickstart input[type=url],
     .quickstart select {
       margin: 0;
-      background-color: rgba(15, 12, 41, .55);
-      color: #fff;
-      border: 1.5px solid rgba(167, 139, 250, .35);
+      background-color: rgba(255, 255, 255, .8);
+      color: var(--text);
+      border: 1.5px solid rgba(124, 58, 237, .3);
       border-radius: .65rem;
       min-height: 2.8rem;
       padding: 0 .9rem;
       font-size: .95rem;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6);
       transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
     }
     .quickstart input[type=url]:hover,
     .quickstart input[type=url]:focus,
     .quickstart select:hover,
     .quickstart select:focus {
-      border-color: rgba(167, 139, 250, .75);
-      box-shadow: 0 0 0 3px rgba(124, 58, 237, .22);
+      border-color: rgba(124, 58, 237, .7);
+      box-shadow: 0 0 0 3px rgba(124, 58, 237, .18);
       outline: none;
     }
-    .quickstart input[type=url]::placeholder { color: rgba(245, 243, 255, .45); }
+    .quickstart input[type=url]::placeholder { color: rgba(43, 35, 80, .4); }
     .quickstart select {
       cursor: pointer;
-      filter: invert(1) hue-rotate(180deg) brightness(1.05);
-      background-color: rgba(15, 12, 41, .55);
+      background-color: rgba(255, 255, 255, .8);
     }
     .quickstart select option {
-      background: #2a1f5d;
-      color: #fff;
+      background: #fff;
+      color: var(--text);
     }
     .quickstart #qs-go {
       height: 2.8rem;
@@ -431,7 +397,7 @@
       grid-column: 1 / -1;
       min-height: 1.1rem;
       font-size: .82rem;
-      color: rgba(245, 243, 255, .82);
+      color: var(--text-soft);
     }
     .quickstart.collapsed .qs-only-file,
     .quickstart.collapsed .qs-only-yt { display: none; }
@@ -464,7 +430,7 @@
 
   <main>
     <div id="banner-ffmpeg" class="card" hidden>
-      <strong style="color:#fda4af">ffmpeg nao encontrado no PATH.</strong>
+      <strong style="color:#be123c">ffmpeg nao encontrado no PATH.</strong>
       <span class="muted">Instale o ffmpeg e adicione-o ao PATH para dublar.</span>
     </div>
 
@@ -502,21 +468,8 @@
           <div class="ph-title">Preview em tempo real</div>
           <div class="ph-sub">O video aparece aqui assim que a dublagem comeca. Os trechos dublados entram na posicao certa da linha do tempo.</div>
         </div>
-        <video id="video" autoplay muted playsinline hidden></video>
-        <div id="preview-controls" class="preview-controls" hidden>
-          <button id="pc-mute" type="button" class="pc-btn" aria-label="Som">
-            <svg id="pc-mute-icon-on" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-              <line x1="23" y1="9" x2="17" y2="15"></line>
-              <line x1="17" y1="9" x2="23" y2="15"></line>
-            </svg>
-            <svg id="pc-mute-icon-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-            </svg>
-          </button>
-          <input id="pc-volume" type="range" min="0" max="100" value="100" class="pc-volume" aria-label="Volume">
-        </div>
+        <video id="video" autoplay playsinline controls hidden></video>
+      </div>
         <div id="preview-status" class="preview-status" aria-live="polite">
           <div class="ps-spinner"></div>
           <div class="ps-label" id="preview-status-label">Aguardando...</div>
@@ -524,7 +477,7 @@
           <div class="ps-bar"><div class="ps-bar-fill" id="preview-status-bar"></div></div>
         </div>
       </div>
-      <div class="preview-caption">Use os controles (play/pause, volume, tela cheia) para assistir. O video espera enquanto um trecho esta sendo gerado.</div>
+      <div class="preview-caption">O video original aparece na hora. Quando a dublagem comeca, a timeline dublada entra no lugar (trechos prontos na posicao certa).</div>
     </section>
 
     <section class="card">
@@ -569,7 +522,7 @@
 
       <fieldset>
         <label><input type="checkbox" id="preview" checked> Preview do video em tempo real (stream no navegador)</label>
-        <label><input type="checkbox" id="samples" checked> Amostras de audio por trecho</label>
+        <label><input type="checkbox" id="samples-chk" checked> Amostras de audio por trecho</label>
         <label><input type="checkbox" id="dry"> So listar legendas (dry-run)</label>
       </fieldset>
     </section>

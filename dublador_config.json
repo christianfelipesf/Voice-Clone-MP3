@@ -1,8 +1,8 @@
 {
-  "engine": "chatterbox",
+  "engine": "edge",
   "device": "auto",
   "lang": "pt",
   "res": "720",
-  "whisper": "small",
+  "whisper": "distil-large-v3",
   "preview": true
 }

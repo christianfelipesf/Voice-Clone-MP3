@@ -248,7 +248,10 @@ def _ensure_preview(job, video_path):
     try:
         pv = _preview.WebLivePreview(
             video_path, log=lambda msg: _emit(job, "log", line=msg),
-            work_dir=job.dir)
+            work_dir=job.dir,
+            on_restart=lambda: _emit(
+                job, "preview_restart",
+                url=f"/api/jobs/{job.id}/preview"))
         pv.prepare_async()
         pv.launch()
         job.preview = pv

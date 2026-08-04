@@ -264,11 +264,15 @@ class _DownloadAborted(Exception):
 
 def download_video(url, resolution, work_dir, cookies=None, cookies_browser=None):
     outtmpl = os.path.join(work_dir, "video.%(ext)s")
+    # Prefere H.264 (avc1) porque ffmpeg antigos nao decodificam AV1/VP9/HEVC;
+    # cai para o melhor codec disponivel se nao houver H.264 na resolucao.
     if resolution == "best":
-        fmt = "bv*+ba/b"
+        fmt = ("bv*[vcodec^=avc1]+ba[ext=m4a]/bv*+ba/b")
     else:
-        fmt = (f"bv*[height<={resolution}]+ba[ext=m4a]/b[height<={resolution}]"
-               f"/bv*+ba/b")
+        fmt = (f"bv*[vcodec^=avc1][height<={resolution}]+ba[ext=m4a]/"
+               f"b[height<={resolution}][vcodec^=avc1]/"
+               f"bv*[height<={resolution}]+ba[ext=m4a]/"
+               f"b[height<={resolution}]/bv*+ba/b")
     opts = {
         "format": fmt,
         "merge_output_format": "mp4",
@@ -278,7 +282,7 @@ def download_video(url, resolution, work_dir, cookies=None, cookies_browser=None
         "noplaylist": True,
     }
     opts.update(_cookie_opts(cookies, cookies_browser))
-    print(f"  Baixando video ({resolution}p ou melhor disponivel)...")
+    print(f"  Baixando video ({resolution}p ou melhor; H.264 preferido)...")
     with _ydl(opts) as ydl:
         ydl.download([url])
     vids = [p for p in glob.glob(os.path.join(work_dir, "video.*"))
@@ -308,6 +312,8 @@ def run_dublar(video_path, srt_path, language, extra):
         cmd += ["--srt", srt_path]
     else:
         cmd += ["--whisper-model", extra.get("whisper_model", "distil-large-v3")]
+        if extra.get("whisper_beam"):
+            cmd += ["--whisper-beam", str(int(extra["whisper_beam"]))]
     if extra.get("out"):
         cmd += ["--out", extra["out"]]
     for flag, val in (("--device", extra.get("device")),
@@ -362,6 +368,9 @@ def main():
     ap.add_argument("--whisper-model", default="distil-large-v3",
                     help="Modelo do Whisper quando nao houver legenda "
                          "(padrao: distil-large-v3)")
+    ap.add_argument("--whisper-beam", type=int, default=None,
+                    help="beam_size do Whisper quando nao houver legenda "
+                         "(padrao: adaptativo do dublar.py)")
     ap.add_argument("--engine", default="edge",
                     help="Motor de dublagem: edge (Edge TTS, leve, padrao) "
                          "ou chatterbox (clonagem de voz, offline)")
@@ -458,6 +467,7 @@ def main():
             "out": args.out or os.path.join(os.getcwd(),
                                             sanitize(title) + "_dublado.mp4"),
             "whisper_model": args.whisper_model,
+            "whisper_beam": args.whisper_beam,
             "engine": args.engine,
             "device": args.device,
             "temperature": args.temperature,

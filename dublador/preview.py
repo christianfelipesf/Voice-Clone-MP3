@@ -377,15 +377,18 @@ class WebLivePreview:
     CH = 2
     _VIDEO_CODECS_COPY = ("h264", "hevc", "h265", "avc1", "vp9")
 
-    def __init__(self, video_path, log=None, work_dir=None, resume_from=0.0):
+    def __init__(self, video_path, log=None, work_dir=None, resume_from=0.0,
+                 on_restart=None):
         self.video_path = video_path
         self.log = log or (lambda msg: None)
         self.work_dir = work_dir
+        self.on_restart = on_restart or (lambda: None)
         self.lock = threading.Lock()
         self.q = queue.Queue()
         self.closed = False
         self.failed = False
         self.started = False
+        self._dubbed_started = False
 
         self.base = None
         self.base_frames = 0
@@ -395,11 +398,15 @@ class WebLivePreview:
         self.prepare_thread = None
 
         self.proc_mux = None
+        self.proc_orig = None
         self.pump = None
+        self.pump_orig = None
         self.feeder = None
         self.buf = _Bounded()
+        self.buf_original = None
         self._orig_pcm = None
         self._stream_path = None
+        self._orig_stream_path = None
 
     # ------------------------------------------------------------------
     # PREPARACAO (decodifica o audio original e mede a duracao)
@@ -448,13 +455,9 @@ class WebLivePreview:
     # ------------------------------------------------------------------
     # MUXER (sem ffplay; bytes vao para o buffer HTTP)
     # ------------------------------------------------------------------
-    def _start_muxer(self):
-        if self.started or self.closed:
-            return False
-        if not self.base_frames and self.duration_frames == 0:
-            self.log("[PREVIEW] nao foi possivel medir o video.\n")
-            return False
-
+    def _codec_args(self):
+        """Argumentos de video para o muxer: copia o codec quando possivel
+        (h264/hevc/vp9) senao re-encoda para libx264 zerolatency."""
         codec = ffprobe(self.video_path, "-select_streams", "v:0",
                         "-show_entries", "stream=codec_name", "-of", "csv=p=0")
         venc = []
@@ -468,6 +471,156 @@ class WebLivePreview:
         else:
             venc = ["-c:v", "libx264", "-preset", "veryfast",
                     "-tune", "zerolatency"]
+        return venc, bsf
+
+    def _spawn_err_thread(self, proc):
+        def _err():
+            log_path = os.path.join(self.work_dir or ".", "preview_mux.log")
+            try:
+                with open(log_path, "w", encoding="utf-8",
+                          errors="replace") as fh:
+                    for line in proc.stderr:
+                        s = line.decode("utf-8", "replace").rstrip()
+                        fh.write(s + "\n")
+                        fh.flush()
+                        if s and not s.startswith("ffmpeg version") \
+                                and not s.startswith("  built on") \
+                                and not s.startswith("  configuration"):
+                            self.log(f"[PREVIEW] muxer: {s}\n")
+            except Exception:
+                pass
+        threading.Thread(target=_err, daemon=True).start()
+
+    def _pump_ts(self, stream_path, proc, buf):
+        """Le o arquivo .ts gerado pelo muxer e empurra os bytes novos para
+        `buf` (streaming 'ao vivo'; descarta o mais antigo quando cheio)."""
+        offset = 0
+        last_mtime = 0
+        idle_polls = 0
+        try:
+            while True:
+                try:
+                    st = os.stat(stream_path)
+                except OSError:
+                    time.sleep(0.05)
+                    continue
+                if st.st_mtime_ns != last_mtime or st.st_size > offset:
+                    try:
+                        with open(stream_path, "rb") as f:
+                            f.seek(offset)
+                            data = f.read(65536)
+                            if data:
+                                offset += len(data)
+                                buf.push(data)
+                    except OSError:
+                        pass
+                    last_mtime = st.st_mtime_ns
+                    idle_polls = 0
+                else:
+                    idle_polls += 1
+                if proc.poll() is not None and idle_polls > 4:
+                    try:
+                        with open(stream_path, "rb") as f:
+                            f.seek(offset)
+                            data = f.read()
+                            if data:
+                                offset += len(data)
+                                buf.push(data)
+                    except OSError:
+                        pass
+                    break
+                if idle_polls > 40:
+                    time.sleep(0.05)
+                else:
+                    time.sleep(0.01)
+        except Exception:
+            pass
+        finally:
+            buf.close()
+
+    # ------------------------------------------------------------------
+    # FASE 1: video ORIGINAL em tempo real (aparece imediatamente,
+    # enquanto o Whisper/modelo carrega e antes do 1o trecho dublado).
+    # ------------------------------------------------------------------
+    def _start_original(self):
+        if self.proc_orig is not None or self.closed:
+            return False
+        venc, bsf = self._codec_args()
+        try:
+            self._orig_stream_path = os.path.join(
+                self.work_dir or ".", f"preview_live_{os.getpid()}.ts")
+            if os.path.exists(self._orig_stream_path):
+                try:
+                    os.remove(self._orig_stream_path)
+                except OSError:
+                    pass
+            self.buf_original = _Bounded()
+            self.buf = self.buf_original
+            self.proc_orig = subprocess.Popen(
+                ["ffmpeg", "-y", "-re", "-i", self.video_path,
+                 "-map", "0:v:0", "-map", "0:a:0?",
+                 *venc, *bsf, "-c:a", "aac", "-strict", "-2", "-b:a", "192k",
+                 "-g", "30", "-sc_threshold", "0",
+                 "-f", "mpegts", "-muxdelay", "0.2",
+                 "-flush_packets", "1", self._orig_stream_path],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE, bufsize=0)
+            self._spawn_err_thread(self.proc_orig)
+            self.pump_orig = threading.Thread(
+                target=self._pump_ts,
+                args=(self._orig_stream_path, self.proc_orig,
+                      self.buf_original), daemon=True)
+            self.pump_orig.start()
+            self.started = True
+            self.log("[PREVIEW] video original visivel (fase 1).\n")
+            return True
+        except Exception as ex:
+            self.failed = True
+            if self.buf_original is not None:
+                self.buf_original.close()
+            self.log(f"[PREVIEW] nao foi possivel abrir o video original: "
+                     f"{ex}\n")
+            return False
+
+    def _switch_to_dubbed(self):
+        """Fase 1 -> fase 2: para o muxer do video original, abre um buffer
+        novo para a timeline dublada (que recomeca em t=0) e avisa o painel
+        para recriar o player."""
+        if self.proc_orig is not None:
+            try:
+                self.proc_orig.wait(timeout=5)
+            except Exception:
+                try:
+                    self.proc_orig.kill()
+                except Exception:
+                    pass
+            self.proc_orig = None
+        if self._orig_stream_path and os.path.exists(self._orig_stream_path):
+            try:
+                os.remove(self._orig_stream_path)
+            except OSError:
+                pass
+        if self.buf_original is not None:
+            self.buf_original.close()
+            self.buf_original = None
+        self.buf = _Bounded()
+        try:
+            self.on_restart()
+        except Exception:
+            pass
+        self.log("[PREVIEW] dublagem iniciada; stream reiniciado "
+                 "(timeline dublada em t=0).\n")
+
+    # ------------------------------------------------------------------
+    # FASE 2: timeline dublada (video + audio dublado no lugar)
+    # ------------------------------------------------------------------
+    def _start_muxer(self):
+        if self._dubbed_started or self.closed:
+            return False
+        if not self.base_frames and self.duration_frames == 0:
+            self.log("[PREVIEW] nao foi possivel medir o video.\n")
+            return False
+        venc, bsf = self._codec_args()
 
         try:
             self._stream_path = os.path.join(self.work_dir or ".",
@@ -488,75 +641,16 @@ class WebLivePreview:
                  "-flush_packets", "1", self._stream_path],
                 stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE, bufsize=0)
-
-            def _err():
-                log_path = os.path.join(self.work_dir or ".",
-                                        "preview_mux.log")
-                try:
-                    with open(log_path, "w", encoding="utf-8",
-                              errors="replace") as fh:
-                        for line in self.proc_mux.stderr:
-                            s = line.decode("utf-8", "replace").rstrip()
-                            fh.write(s + "\n")
-                            fh.flush()
-                            if s and not s.startswith("ffmpeg version") \
-                                    and not s.startswith("  built on") \
-                                    and not s.startswith("  configuration"):
-                                self.log(f"[PREVIEW] muxer: {s}\n")
-                except Exception:
-                    pass
-
-            threading.Thread(target=_err, daemon=True).start()
-
-            def _pump():
-                offset = 0
-                last_mtime = 0
-                idle_polls = 0
-                try:
-                    while True:
-                        try:
-                            st = os.stat(self._stream_path)
-                        except OSError:
-                            time.sleep(0.05)
-                            continue
-                        if st.st_mtime_ns != last_mtime or st.st_size > offset:
-                            try:
-                                with open(self._stream_path, "rb") as f:
-                                    f.seek(offset)
-                                    data = f.read(65536)
-                                    if data:
-                                        offset += len(data)
-                                        self.buf.push(data)
-                            except OSError:
-                                pass
-                            last_mtime = st.st_mtime_ns
-                            idle_polls = 0
-                        else:
-                            idle_polls += 1
-                        if self.proc_mux.poll() is not None and idle_polls > 4:
-                            try:
-                                with open(self._stream_path, "rb") as f:
-                                    f.seek(offset)
-                                    data = f.read()
-                                    if data:
-                                        offset += len(data)
-                                        self.buf.push(data)
-                            except OSError:
-                                pass
-                            break
-                        if idle_polls > 40:
-                            time.sleep(0.05)
-                        else:
-                            time.sleep(0.01)
-                except Exception:
-                    pass
-                finally:
-                    self.buf.close()
-
-            self.pump = threading.Thread(target=_pump, daemon=True)
+            self._spawn_err_thread(self.proc_mux)
+            self.pump = threading.Thread(
+                target=self._pump_ts,
+                args=(self._stream_path, self.proc_mux, self.buf),
+                daemon=True)
             self.pump.start()
+            self._dubbed_started = True
             self.started = True
-            self.log("[PREVIEW] stream aberto (sincronizado com a geracao).\n")
+            self.log("[PREVIEW] stream dublado aberto (sincronizado com a "
+                     "geracao).\n")
             return True
         except Exception as ex:
             self.failed = True
@@ -569,10 +663,14 @@ class WebLivePreview:
             self.prepare_thread.join()
         if self.failed:
             self._drain()
+            self._finish()
             return
         first = self.q.get()
         if first is None or self.closed:
+            self._finish()
             return
+        # Fase 2: timeline dublada a partir de t=0.
+        self._switch_to_dubbed()
         if not self._start_muxer():
             self._drain()
             return
@@ -669,18 +767,22 @@ class WebLivePreview:
         self.buf.close()
 
     def _close_procs(self):
-        if self.proc_mux is not None:
+        for proc in (self.proc_mux, self.proc_orig):
+            if proc is None:
+                continue
             try:
-                if self.proc_mux.stdin:
-                    self.proc_mux.stdin.close()
+                if proc.stdin:
+                    proc.stdin.close()
             except Exception:
                 pass
-        if self.proc_mux is not None:
+        for proc in (self.proc_mux, self.proc_orig):
+            if proc is None:
+                continue
             try:
-                self.proc_mux.wait(timeout=5)
+                proc.wait(timeout=5)
             except Exception:
                 try:
-                    self.proc_mux.kill()
+                    proc.kill()
                 except Exception:
                     pass
         if self._orig_pcm and os.path.exists(self._orig_pcm):
@@ -688,11 +790,12 @@ class WebLivePreview:
                 os.remove(self._orig_pcm)
             except OSError:
                 pass
-        if self._stream_path and os.path.exists(self._stream_path):
-            try:
-                os.remove(self._stream_path)
-            except OSError:
-                pass
+        for path in (self._stream_path, self._orig_stream_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     def close(self):
         self.closed = True
@@ -703,6 +806,7 @@ class WebLivePreview:
 
     def launch(self):
         if self.feeder is None and not self.closed:
+            self._start_original()
             self.feeder = threading.Thread(target=self._run_feeder, daemon=True)
             self.feeder.start()
 
@@ -716,8 +820,9 @@ class WebLivePreview:
             time.sleep(0.2)
         if not self.started:
             return
+        buf = self.buf
         while True:
-            item = self.buf.get(timeout=1.0)
+            item = buf.get(timeout=1.0)
             if item is _EMPTY:
                 continue
             if item is None:

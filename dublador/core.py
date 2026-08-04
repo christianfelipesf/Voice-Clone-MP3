@@ -83,8 +83,11 @@ def get_chatterbox(device="cpu"):
     if CHATTERBOX_ENGINE is None:
         print(f"  Carregando Chatterbox Multilingual V3 em {device} "
               f"(primeira vez baixa ~2GB da HuggingFace)...")
-        from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-        CHATTERBOX_ENGINE = ChatterboxMultilingualTTS.from_pretrained(
+        from dublador.config import ensure_pkg
+        mtl = ensure_pkg("chatterbox.mtl_tts", "chatterbox-tts",
+                         hint="Motor offline de clonagem de voz (pesado). "
+                              "Use --engine edge para o motor leve.")
+        CHATTERBOX_ENGINE = mtl.ChatterboxMultilingualTTS.from_pretrained(
             device=device, t3_model=CHATTERBOX_T3_MODEL)
         print("  Chatterbox Multilingual V3 pronto.")
     return CHATTERBOX_ENGINE
@@ -183,9 +186,11 @@ def translate_text(text, target="pt", retries=3):
 
     for attempt in range(retries):
         try:
-            from deep_translator import GoogleTranslator
-            out = GoogleTranslator(source="auto",
-                                   target=target).translate(text=text)
+            from dublador.config import ensure_pkg
+            translator = ensure_pkg("deep_translator", "deep-translator")
+            out = translator.GoogleTranslator(source="auto",
+                                              target=target).translate(
+                text=text)
             if ok(out):
                 return out.strip()
         except Exception:
@@ -224,7 +229,10 @@ def transcribe_entries(audio_path, model_size="distil-large-v3", device="cpu",
     `beam_size` adaptativo: 1 para distil-* ou tiny/base em CPU, 3 para
     small+ em CPU, 5 em CUDA. Aceita override explicito."""
     print(f"  Carregando Whisper ({model_size}, {device})...")
-    from faster_whisper import WhisperModel
+    from dublador.config import ensure_pkg
+    faster_whisper = ensure_pkg("faster_whisper", "faster-whisper",
+                                hint="Transcricao local do audio.")
+    WhisperModel = faster_whisper.WhisperModel
     is_distil = model_size.startswith("distil-")
     if device == "cuda":
         compute = "float16"
@@ -371,6 +379,9 @@ def synthesize_text(engine, text, ref_wav, out_wav, language="pt",
     idioma, leve, sem clonagem, requer internet). `voice_idx` alterna entre
     a voz feminina (par) e masculina (impar) no Edge."""
     if engine_name == "edge":
+        from dublador.config import ensure_pkg
+        ensure_pkg("edge_tts", "edge-tts",
+                   hint="Motor leve de voz online (Edge TTS).")
         synthesize_edge(text, out_wav, language, voice_idx)
         return
     temp = 0.8 if temperature is None else temperature
@@ -381,7 +392,9 @@ def synthesize_text(engine, text, ref_wav, out_wav, language="pt",
 def _edge_save(text, voice, path):
     """Gera o audio do texto com o Edge TTS e salva em `path` (mp3)."""
     import asyncio
-    import edge_tts
+    from dublador.config import ensure_pkg
+    edge_tts = ensure_pkg("edge_tts", "edge-tts",
+                          hint="Motor leve de voz online (Edge TTS).")
 
     async def _go():
         c = edge_tts.Communicate(text, voice)
@@ -395,7 +408,9 @@ def synthesize_edge(text, out_wav, language="pt", voice_idx=0):
     uma masculina; `voice_idx` par usa a feminina e impar a masculina.
     Textos longos sao divididos (como no Chatterbox) e unidos por ffmpeg,
     para nao estourar o limite por requisicao do servico."""
-    import edge_tts
+    from dublador.config import ensure_pkg
+    edge_tts = ensure_pkg("edge_tts", "edge-tts",
+                          hint="Motor leve de voz online (Edge TTS).")
     voices = EDGE_VOICES.get(language.lower(), EDGE_VOICES["pt"])
     voice = voices[voice_idx % 2]
     chunks = split_text(text)
@@ -745,7 +760,9 @@ def main():
 
     print("=" * 60)
     print("  Dublador v2 (dublagem simples)")
-    print(f"  Audio: {args.audio}{'  [VIDEO]' if is_video else ''}")
+    print(f"  Audio: {args.audio}")
+    if is_video:
+        print(f"[VIDEO] {os.path.abspath(args.audio)}")
     if auto_mode:
         print(f"  Auto:  idioma '{detected_lang}' transcrito e traduzido "
               f"para '{args.language}' ({len(entries)} legendas)")
