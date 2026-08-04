@@ -377,7 +377,7 @@ class WebLivePreview:
     CH = 2
     _VIDEO_CODECS_COPY = ("h264", "hevc", "h265", "avc1", "vp9")
 
-    def __init__(self, video_path, log=None, work_dir=None):
+    def __init__(self, video_path, log=None, work_dir=None, resume_from=0.0):
         self.video_path = video_path
         self.log = log or (lambda msg: None)
         self.work_dir = work_dir
@@ -390,7 +390,8 @@ class WebLivePreview:
         self.base = None
         self.base_frames = 0
         self.duration_frames = 0
-        self.sent = 0
+        self.sent = int(max(0.0, resume_from) * self.SR)
+        self.resume_from = float(resume_from)
         self.prepare_thread = None
 
         self.proc_mux = None
@@ -509,18 +510,30 @@ class WebLivePreview:
 
             def _pump():
                 offset = 0
+                last_mtime = 0
+                idle_polls = 0
                 try:
                     while True:
                         try:
-                            with open(self._stream_path, "rb") as f:
-                                f.seek(offset)
-                                data = f.read(65536)
-                                if data:
-                                    offset += len(data)
-                                    self.buf.push(data)
+                            st = os.stat(self._stream_path)
                         except OSError:
-                            pass
-                        if self.proc_mux.poll() is not None:
+                            time.sleep(0.05)
+                            continue
+                        if st.st_mtime_ns != last_mtime or st.st_size > offset:
+                            try:
+                                with open(self._stream_path, "rb") as f:
+                                    f.seek(offset)
+                                    data = f.read(65536)
+                                    if data:
+                                        offset += len(data)
+                                        self.buf.push(data)
+                            except OSError:
+                                pass
+                            last_mtime = st.st_mtime_ns
+                            idle_polls = 0
+                        else:
+                            idle_polls += 1
+                        if self.proc_mux.poll() is not None and idle_polls > 4:
                             try:
                                 with open(self._stream_path, "rb") as f:
                                     f.seek(offset)
@@ -531,7 +544,10 @@ class WebLivePreview:
                             except OSError:
                                 pass
                             break
-                        time.sleep(0.05)
+                        if idle_polls > 40:
+                            time.sleep(0.05)
+                        else:
+                            time.sleep(0.01)
                 except Exception:
                     pass
                 finally:
@@ -592,9 +608,12 @@ class WebLivePreview:
     def _feed(self, start, end, wav_path):
         a = int(round(start * self.SR))
         b = int(round(end * self.SR))
+        if b <= self.sent:
+            self.log(f"[PREVIEW] trecho #{os.path.basename(wav_path)} "
+                     f"ja coberto pelo resume; ignorando.\n")
+            return
         if a < self.sent:
-            self.log(f"[PREVIEW] aviso: trecho #{wav_path.split(os.sep)[-1]} "
-                     f"sobrepoe o anterior (ainda nao suportado).\n")
+            a = self.sent
         self._write_base(self.sent, a)
         self._write_dubbed(a, b, wav_path)
         self.sent = max(self.sent, b)

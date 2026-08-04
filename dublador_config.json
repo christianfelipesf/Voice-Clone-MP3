@@ -4,5 +4,5 @@
   "lang": "pt",
   "res": "720",
   "whisper": "small",
-  "preview": false
+  "preview": true
 }

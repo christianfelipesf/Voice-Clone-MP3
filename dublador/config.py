@@ -34,13 +34,23 @@ ENGINE_LABELS = {"chatterbox": "Chatterbox (clonagem)",
                  "edge": "Edge TTS (leve)"}
 
 PHASES = [
+    ("Obtendo informacoes do video", "Obtendo informacoes..."),
     ("Baixando video", "Baixando video..."),
+    ("[2/3] Legendas", "Buscando legendas..."),
+    ("Traduzindo legenda", "Traduzindo legenda..."),
+    ("Gerando SRT", "Gerando SRT..."),
+    ("Traducao salva", "Traducao salva"),
+    ("Carregando Whisper", "Carregando Whisper..."),
     ("Transcrevendo e traduzindo", "Transcrevendo e traduzindo..."),
     ("Transcrevendo", "Transcrevendo..."),
     ("Preparando audio", "Preparando audio..."),
+    ("Carregando Chatterbox Multilingual V3", "Carregando motor de voz..."),
     ("Carregando motor", "Carregando motor de voz..."),
-    ("Dublagem de", "Dublagem..."),
+    ("Sintetizando", "Sintetizando falas..."),
+    ("Dublagem de", "Dublando..."),
+    ("[3/3] Dublagem", "Iniciando dublagem..."),
     ("Finalizando", "Finalizando..."),
+    ("[OK]", "Concluido"),
 ]
 
 # Valores padrao usados ao resetar as opcoes.
@@ -55,9 +65,11 @@ DEFAULTS = {
     "seed": "",
     "maxtempo": "",
     "cookies": "",
+    "parallel": "1",
+    "whisper_beam": "",
     "theme_dark": False,
     "mode": "Arquivo",
-    "preview": False,
+    "preview": True,
 }
 
 _LABEL_TO_VALUE = {label: value for value, label in ENGINE_LABELS.items()}

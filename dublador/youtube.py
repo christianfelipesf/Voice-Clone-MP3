@@ -192,7 +192,11 @@ def download_subtitle(url, lang, auto, work_dir, cookies=None, cookies_browser=N
     """Baixa a legenda do idioma escolhido. O YouTube limita o endpoint de
     legendas (HTTP 429) por IP: o cliente web tenta com backoff crescente e,
     se persistir, usa clientes alternativos (tv/ios/mweb) que usam endpoints
-    diferentes. Com cookies do navegador logado o 429 praticamente nao ocorre."""
+    diferentes. Com cookies do navegador logado o 429 praticamente nao ocorre.
+
+    Quando o erro e DRM/429/format-not-available em TODOS os clientes, levanta
+    `_DownloadAborted` para que o caller pule direto para o Whisper (sem
+    ficar queimando tempo com 156 idiomas)."""
     outtmpl = os.path.join(work_dir, "sub.%(ext)s")
     base_opts = {
         "skip_download": True,
@@ -208,11 +212,12 @@ def download_subtitle(url, lang, auto, work_dir, cookies=None, cookies_browser=N
     base_opts.update(_cookie_opts(cookies, cookies_browser))
     clients = [None, "tv", "ios", "mweb"]
     last = None
+    fatal = False
     for client in clients:
         opts = dict(base_opts)
         if client:
             opts["extractor_args"] = {"youtube": {"player_client": [client]}}
-        attempts = 3 if client is None else 1
+        attempts = 2 if client is None else 1
         ok = False
         for attempt in range(attempts):
             try:
@@ -222,11 +227,18 @@ def download_subtitle(url, lang, auto, work_dir, cookies=None, cookies_browser=N
                 break
             except Exception as ex:
                 last = ex
+                msg = str(ex).lower()
+                if ("429" in msg or "drm" in msg or "format is not available" in msg
+                        or "sign in to confirm" in msg or "confirm your age" in msg):
+                    fatal = True
+                    break
                 if attempt < attempts - 1:
                     wait = 20 * (attempt + 1)
                     print(f"  Aviso: falha ao baixar a legenda ({ex}); "
                           f"tentando de novo em {wait}s...")
                     time.sleep(wait)
+        if fatal:
+            raise _DownloadAborted(last)
         if not ok:
             continue
         found = glob.glob(os.path.join(work_dir, "sub.*.srt"))
@@ -242,6 +254,12 @@ def download_subtitle(url, lang, auto, work_dir, cookies=None, cookies_browser=N
     print(f"  Aviso: nao foi possivel baixar a legenda ({last}). "
           f"Vou gerar a transcricao com Whisper.")
     return None
+
+
+class _DownloadAborted(Exception):
+    """Levantada quando o YT-DLP trava em DRM/429/format-unavailable.
+    Faz o caller pular direto para o Whisper em vez de tentar 156 idiomas."""
+    pass
 
 
 def download_video(url, resolution, work_dir, cookies=None, cookies_browser=None):
@@ -398,30 +416,42 @@ def main():
         srt_path = None
         print(f"\n[2/3] Legendas...")
         candidates = subtitle_candidates(info)
-        if candidates:
-            for i, (clang, cauto, ctrans) in enumerate(candidates):
-                skip = i > 0
-                if skip:
-                    print(f"  Tentando alternativa: '{clang}' "
-                          f"({'automatica' if cauto else 'manual'})...")
-                time.sleep(1)
-                sub_path = download_subtitle(args.url, clang, cauto, work_dir,
-                                             args.cookies, args.cookies_from_browser)
-                if not sub_path:
-                    continue
-                if ctrans and args.language.lower() != clang.lower():
-                    out_srt = os.path.join(work_dir, "traduzido.srt")
-                    print(f"  Traduzindo legenda '{clang}' para "
-                          f"'{args.language}'...")
-                    srt_path = translate_srt(sub_path, args.language, out_srt)
-                    if srt_path:
-                        print(f"  Legenda traduzida: {srt_path}")
+        try:
+            if candidates:
+                for i, (clang, cauto, ctrans) in enumerate(candidates):
+                    if i > 0:
+                        print(f"  Tentando alternativa: '{clang}' "
+                              f"({'automatica' if cauto else 'manual'})...")
+                        if i > 4:
+                            print(f"  Limite de alternativas atingido - "
+                                  f"vou usar Whisper.")
+                            break
+                    time.sleep(1)
+                    try:
+                        sub_path = download_subtitle(args.url, clang, cauto, work_dir,
+                                                     args.cookies, args.cookies_from_browser)
+                    except _DownloadAborted as ex:
+                        print(f"  Download bloqueado pelo YouTube ({ex}). "
+                              f"Pulando direto para Whisper.")
+                        break
+                    if not sub_path:
+                        continue
+                    if ctrans and args.language.lower() != clang.lower():
+                        out_srt = os.path.join(work_dir, "traduzido.srt")
+                        print(f"  Traduzindo legenda '{clang}' para "
+                              f"'{args.language}'...")
+                        srt_path = translate_srt(sub_path, args.language, out_srt)
+                        if srt_path:
+                            print(f"  Legenda traduzida: {srt_path}")
+                        break
+                    srt_path = sub_path
+                    print(f"  Legenda usada direto: {srt_path}")
                     break
-                srt_path = sub_path
-                print(f"  Legenda usada direto: {srt_path}")
-                break
+        except Exception as ex:
+            print(f"  Aviso: erro ao buscar legendas ({ex}); "
+                  f"vou usar Whisper.")
         if not srt_path:
-            print("  Nao foi possivel baixar nenhuma legenda - usando Whisper.")
+            print("  Nenhuma legenda disponivel - usando Whisper.")
 
         extra = {
             "out": args.out or os.path.join(os.getcwd(),

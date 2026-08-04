@@ -90,9 +90,11 @@ def default_opts():
         "seed": val("seed", DEFAULTS["seed"]),
         "maxtempo": val("maxtempo", DEFAULTS["maxtempo"]),
         "cookies": val("cookies", DEFAULTS["cookies"]),
-        "preview": False,
+        "preview": val("preview", DEFAULTS.get("preview", True)),
         "samples": True,
         "dry": False,
+        "parallel": val("parallel", DEFAULTS.get("parallel", "1")),
+        "whisper_beam": val("whisper_beam", DEFAULTS.get("whisper_beam", "")),
     }
 
 
@@ -116,6 +118,7 @@ class Job:
         self.progress = [0, 0]
         self.segments = []
         self.preview = None
+        self.preview_resume_from = 0.0
         self.error = None
         self.cancelled = False
         self.created = time.time()
@@ -133,6 +136,8 @@ class Job:
             "created": self.created,
             "finished": self.finished,
             "error": self.error,
+            "preview_wanted": self.preview_wanted,
+            "preview_resume_from": self.preview_resume_from,
             "cmd": " ".join(self.cmd),
         }
 
@@ -162,6 +167,7 @@ def _parse(job, line):
                "start": float(m.group(3)), "end": float(m.group(4)),
                "text": m.group(5)}
         job.segments.append(seg)
+        job.preview_resume_from = max(job.preview_resume_from, seg["end"])
         _emit(job, "seg", **seg)
         if job.preview is not None:
             job.preview.add_segment(seg["start"], seg["end"], seg["path"])
@@ -232,6 +238,8 @@ def _spawn(job):
 # ============================================================
 
 def _ensure_preview(job, video_path):
+    if job.preview is not None:
+        return
     if _preview is None:
         _emit(job, "log", line="[PREVIEW] numpy/soundfile ausentes; "
                                "sem stream em tempo real.\n")
@@ -257,7 +265,10 @@ def _add_numeric(cmd, flag, value):
     if not value or not str(value).strip():
         return
     try:
-        cmd += [flag, str(int(value)) if flag == "--seed" else str(float(value))]
+        if flag in ("--seed", "--whisper-beam"):
+            cmd += [flag, str(int(value))]
+        else:
+            cmd += [flag, str(float(value))]
     except ValueError:
         pass
 
@@ -269,9 +280,13 @@ def build_file_cmd(job, audio_path, srt_path, out_path, opts):
         cmd += ["--srt", srt_path]
     else:
         cmd += ["--whisper-model", opts["whisper"]]
+        _add_numeric(cmd, "--whisper-beam", opts.get("whisper_beam"))
     cmd += ["--out", out_path]
     if opts["device"] not in ("", "auto"):
         cmd += ["--device", opts["device"]]
+    parallel = int(opts.get("parallel") or 1)
+    if parallel > 1:
+        cmd += ["--parallel", str(parallel)]
     _add_numeric(cmd, "--temperature", opts["temp"])
     _add_numeric(cmd, "--volume", opts["volume"])
     _add_numeric(cmd, "--seed", opts["seed"])
@@ -289,9 +304,13 @@ def build_yt_cmd(job, url, out_path, opts):
     if opts["device"] not in ("", "auto"):
         cmd += ["--device", opts["device"]]
     cmd += ["--whisper-model", opts["whisper"]]
+    _add_numeric(cmd, "--whisper-beam", opts.get("whisper_beam"))
     cmd += ["--engine", opts["engine"]]
     if opts.get("cookies"):
         cmd += ["--cookies-from-browser", opts["cookies"]]
+    parallel = int(opts.get("parallel") or 1)
+    if parallel > 1:
+        cmd += ["--parallel", str(parallel)]
     _add_numeric(cmd, "--temperature", opts["temp"])
     _add_numeric(cmd, "--volume", opts["volume"])
     _add_numeric(cmd, "--seed", opts["seed"])

@@ -91,8 +91,23 @@ def get_chatterbox(device="cpu"):
 
 
 def run_ffmpeg(args):
-    cmd = ["ffmpeg", "-y"] + args
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"] + args
     r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"ffmpeg falhou: {r.stderr[-600:]}")
+    return r
+
+
+def run_ffmpeg_stream(args, stdin_bytes=None, stdout=False):
+    """Executa ffmpeg com argumentos. Se `stdout` for True, le do stdout
+    (util para encoders). `stdin_bytes` envia para o stdin e fecha."""
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"] + args
+    if stdin_bytes is not None:
+        r = subprocess.run(cmd, input=stdin_bytes, capture_output=True, text=True)
+    elif stdout:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+    else:
+        r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg falhou: {r.stderr[-600:]}")
     return r
@@ -197,21 +212,38 @@ def translate_text(text, target="pt", retries=3):
 
 
 def transcribe_entries(audio_path, model_size="small", device="cpu",
-                       target_lang="pt"):
+                       target_lang="pt", beam_size=None):
     """Transcreve a midia com faster-whisper (detecta o idioma sozinho),
     traduz cada fala para `target_lang` e devolve a lista de legendas no
-    mesmo formato do parse_srt."""
+    mesmo formato do parse_srt.
+
+    `beam_size` adaptativo: 1 em CPU + tiny/base (3-5x mais rapido),
+    3 em CPU + small+, 5 em CUDA. Aceita override explicito."""
     print(f"  Carregando Whisper ({model_size}, {device})...")
     from faster_whisper import WhisperModel
     compute = "float16" if device == "cuda" else "int8"
+    if beam_size is None:
+        if device == "cuda":
+            beam_size = 5
+        elif model_size in ("tiny", "base"):
+            beam_size = 1
+        else:
+            beam_size = 3
+    print(f"  Whisper config: beam_size={beam_size}, compute={compute}, "
+          f"vad_filter=True")
     model = WhisperModel(model_size, device=device, compute_type=compute)
     print("  Transcrevendo (detecta idioma automaticamente)...")
+    t0 = time.time()
     segments, info = model.transcribe(
-        audio_path, language=None, vad_filter=True, beam_size=5)
+        audio_path, language=None, vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 500},
+        beam_size=beam_size, best_of=beam_size,
+        condition_on_previous_text=False)
     detected = info.language
     print(f"  Idioma detectado: {detected} "
           f"(probabilidade {float(info.language_probability):.2f})")
     entries = []
+    last_log = 0.0
     for i, seg in enumerate(segments, 1):
         text = (seg.text or "").strip()
         if not text:
@@ -219,8 +251,16 @@ def transcribe_entries(audio_path, model_size="small", device="cpu",
         translated = translate_text(text, target=target_lang)
         entries.append({"index": i, "start": float(seg.start),
                         "end": float(seg.end), "text": translated})
+        now = time.time()
+        if now - last_log > 1.5 or i % 10 == 0:
+            elapsed = now - t0
+            print(f"  [WHISPER] {i} segmentos transcritos "
+                  f"em {elapsed:.1f}s (ultimo: {seg.start:.1f}-{seg.end:.1f}s)")
+            last_log = now
         if i % 5 == 0:
-            time.sleep(0.3)
+            time.sleep(0.2)
+    print(f"  Whisper concluido: {len(entries)} falas em "
+          f"{time.time() - t0:.1f}s")
     return entries, detected
 
 
@@ -394,7 +434,25 @@ def extract_reference(audio_path, start, end, out_path):
 
 
 def convert_to_track_format(synth_wav, conv_wav, channels):
-    """Converte a sintese (24000 mono) para a taxa/canais do original."""
+    """Converte a sintese (24000 mono) para a taxa/canais do original.
+    Se o WAV ja esta no formato alvo, reaproveita o arquivo (sem ffmpeg)."""
+    try:
+        info = sf.info(synth_wav)
+    except Exception:
+        info = None
+    if (info is not None and info.samplerate == TARGET_SR
+            and info.channels == channels
+            and info.subtype == "PCM_16"):
+        if os.path.abspath(synth_wav) != os.path.abspath(conv_wav):
+            try:
+                os.replace(synth_wav, conv_wav)
+            except OSError:
+                shutil.copy2(synth_wav, conv_wav)
+                try:
+                    os.remove(synth_wav)
+                except OSError:
+                    pass
+        return conv_wav
     run_ffmpeg(["-i", synth_wav, "-ar", str(TARGET_SR), "-ac", str(channels),
                 "-acodec", "pcm_s16le", conv_wav])
 
@@ -557,6 +615,9 @@ def main():
     ap.add_argument("--whisper-model", default="small",
                     help="Modelo do Whisper para o modo automatico "
                          "(tiny/base/small/medium/large-v3; padrao: small)")
+    ap.add_argument("--whisper-beam", type=int, default=None,
+                    help="beam_size do Whisper (padrao adaptativo: 1 p/ "
+                         "tiny/base em CPU, 3 p/ small+ em CPU, 5 em CUDA)")
     ap.add_argument("--engine", default="chatterbox",
                     help="Motor de dublagem: chatterbox (clonagem de voz, "
                          "offline, padrao) ou edge (Edge TTS, leve, online, "
@@ -580,6 +641,10 @@ def main():
     ap.add_argument("--seed", type=int, default=None,
                     help="Semente base para reprodutibilidade. Padrao: 1000 "
                          "(cada legenda usa seed + indice)")
+    ap.add_argument("--parallel", type=int, default=1,
+                    help="Numero de sintetizadores em paralelo (Chatterbox). "
+                         "1 = sequencial (padrao). 2-4 = mais rapido em PC "
+                         "forte com CUDA; aumenta uso de VRAM/RAM.")
     ap.add_argument("--dry-run", action="store_true", help="So lista as legendas e sai")
     ap.add_argument("--workdir", default=None, help="Pasta de trabalho (padrao: .dub_<nome> ao lado da saida)")
     ap.add_argument("--keep-parts", action="store_true", help="Nao apaga os arquivos intermediarios")
@@ -616,7 +681,8 @@ def main():
         print("=" * 60)
         print("\n[0/4] Transcrevendo e traduzindo...")
         entries, detected_lang = transcribe_entries(
-            args.audio, args.whisper_model, args.device, args.language)
+            args.audio, args.whisper_model, args.device, args.language,
+            beam_size=args.whisper_beam)
         if not entries:
             sys.exit("[ERRO] Nenhuma fala detectada no audio.")
         if args.gen_srt:
@@ -765,10 +831,38 @@ def main():
             except Exception as ex:
                 print(f"  [DUB {i_disp:3d}/{n_tot}] [ERRO] {ex}")
     else:
+        import concurrent.futures as cf
+        n_parallel = max(1, int(getattr(args, "parallel", 1) or 1))
+        is_cuda = (args.device == "cuda")
+        if n_parallel > 1 and not is_cuda:
+            print(f"  Paralelismo={n_parallel} em CPU; pode competir por nucleos. "
+                  f"Use 2-4 apenas se sobrar nucleos livres.")
+        print(f"  Modo: {'paralelo (' + str(n_parallel) + ' workers)' if n_parallel > 1 else 'sequencial'}")
+
+        def _dub_one(e, ref_wav, synth_wav, conv_wav, fitted_wav):
+            seg_start, seg_end = e["start"], e["end"]
+            try:
+                extract_reference(args.audio, seg_start, seg_end, ref_wav)
+                seed = args.seed + e["index"] if args.seed is not None else 1000 + e["index"]
+                synthesize_text(engine, e["text"], ref_wav, synth_wav,
+                                args.language, temperature=args.temperature, seed=seed)
+                convert_to_track_format(synth_wav, conv_wav, channels)
+                final_seg = fit_to_duration(conv_wav, fitted_wav,
+                                            seg_end - seg_start, channels,
+                                            max_tempo=args.max_tempo)
+                data, _ = sf.read(final_seg, dtype="float32", always_2d=True)
+                limit = int(round((seg_end - seg_start) * sr))
+                if len(data) > limit:
+                    data = data[:limit]
+                return (e, final_seg, data, None)
+            except Exception as ex:
+                return (e, None, None, str(ex))
+
+        pending = []
         for pos, e in enumerate(entries):
             i_disp = pos + 1
             n_tot = len(entries)
-            start, end, text = e["start"], e["end"], e["text"]
+            text = e["text"]
             if not re.search(r"\w", text):
                 skipped += 1
                 print(f"  [DUB {i_disp:3d}/{n_tot}] (ignorada: sem texto)")
@@ -778,33 +872,70 @@ def main():
             synth_wav = os.path.join(parts_dir, seg_id + ".wav")
             conv_wav = os.path.join(parts_dir, seg_id + ".conv.wav")
             fitted_wav = os.path.join(parts_dir, seg_id + ".fitted.wav")
-            print(f"  [DUB {i_disp:3d}/{n_tot}] {start:8.3f}-{end:8.3f}  {text[:70]}")
-            try:
-                extract_reference(args.audio, start, end, ref_wav)
-                seed = args.seed + e["index"] if args.seed is not None else 1000 + e["index"]
-                synthesize_text(engine, text, ref_wav, synth_wav,
-                                args.language, temperature=args.temperature, seed=seed)
-                convert_to_track_format(synth_wav, conv_wav, channels)
-                final_seg = fit_to_duration(conv_wav, fitted_wav, end - start, channels,
-                                            max_tempo=args.max_tempo)
-                data, _ = sf.read(final_seg, dtype="float32", always_2d=True)
-                limit = int(round((end - start) * sr))
-                if len(data) > limit:
-                    data = data[:limit]
+            pending.append((e, ref_wav, synth_wav, conv_wav, fitted_wav))
+
+        if n_parallel <= 1 or len(pending) <= 1:
+            for tup in pending:
+                e, ref_wav, synth_wav, conv_wav, fitted_wav = tup
+                i_disp = entries.index(e) + 1 if e in entries else 0
+                print(f"  [DUB {i_disp:3d}/{len(entries)}] {e['start']:8.3f}-{e['end']:8.3f}"
+                      f"  {e['text'][:70]}")
+                e, final_seg, data, err = _dub_one(e, ref_wav, synth_wav, conv_wav, fitted_wav)
+                if err is not None:
+                    print(f"  [DUB {i_disp:3d}/{len(entries)}] [ERRO] {err}")
+                    continue
+                start, end = e["start"], e["end"]
                 place_segment(track, start, data, args.volume)
                 done += 1
                 print(f"[PROGRESS] {done}/{dub_total}")
                 if args.emit_paths:
                     print(f"[SEG] {e['index']}\t{os.path.abspath(final_seg)}"
-                          f"\t{start:.3f}\t{end:.3f}\t{text[:70]}")
+                          f"\t{start:.3f}\t{end:.3f}\t{e['text'][:70]}")
                 if not args.keep_parts:
                     for p in (synth_wav, conv_wav, fitted_wav, ref_wav):
                         if args.emit_paths and p == final_seg:
                             continue
                         if os.path.exists(p):
-                            os.remove(p)
-            except Exception as ex:
-                print(f"  [DUB {i_disp:3d}/{n_tot}] [ERRO] {ex}")
+                            try:
+                                os.remove(p)
+                            except OSError:
+                                pass
+        else:
+            ctx = cf.ThreadPoolExecutor(max_workers=n_parallel)
+            fut_map = {}
+            for tup in pending:
+                e, ref_wav, synth_wav, conv_wav, fitted_wav = tup
+                fut = ctx.submit(_dub_one, e, ref_wav, synth_wav, conv_wav, fitted_wav)
+                fut_map[fut] = (e, ref_wav, synth_wav, conv_wav, fitted_wav)
+            for fut in cf.as_completed(fut_map):
+                e, ref_wav, synth_wav, conv_wav, fitted_wav = fut_map[fut]
+                i_disp = e["index"]
+                try:
+                    _e, final_seg, data, err = fut.result()
+                except Exception as ex:
+                    err = str(ex)
+                    final_seg = None
+                    data = None
+                if err is not None or data is None:
+                    print(f"  [DUB {i_disp:3d}/{len(entries)}] [ERRO] {err}")
+                    continue
+                start, end = e["start"], e["end"]
+                place_segment(track, start, data, args.volume)
+                done += 1
+                print(f"[PROGRESS] {done}/{dub_total}")
+                if args.emit_paths:
+                    print(f"[SEG] {e['index']}\t{os.path.abspath(final_seg)}"
+                          f"\t{start:.3f}\t{end:.3f}\t{e['text'][:70]}")
+                if not args.keep_parts:
+                    for p in (synth_wav, conv_wav, fitted_wav, ref_wav):
+                        if args.emit_paths and p == final_seg:
+                            continue
+                        if os.path.exists(p):
+                            try:
+                                os.remove(p)
+                            except OSError:
+                                pass
+            ctx.shutdown(wait=True)
 
     print(f"\n[4/4] Finalizando ({done}/{len(entries)} legendas dubladas)...")
     if skipped:
