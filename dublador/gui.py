@@ -32,10 +32,10 @@ import customtkinter as ctk
 import psutil
 
 from dublador import preview
-from dublador.config import (BASE_DIR, SCRIPT, YT_SCRIPT, PYTHON, CONFIG_PATH,
-                             DEVICES, LANGS, WHISPER_MODELS, RESOLUTIONS,
-                             BROWSERS, ENGINE_LABELS, PHASES, DEFAULTS,
-                             engine_to_value, engine_to_label,
+from dublador.config import (BASE_DIR, OUTPUT_DIR, SCRIPT, YT_SCRIPT, PYTHON,
+                             CONFIG_PATH, DEVICES, LANGS, WHISPER_MODELS,
+                             RESOLUTIONS, BROWSERS, ENGINE_LABELS, PHASES,
+                             DEFAULTS, engine_to_value, engine_to_label,
                              load_config, save_config, reset_config)
 from dublador.web import WebServer, FLASK_AVAILABLE
 
@@ -79,7 +79,7 @@ class DublarGUI(ctk.CTk):
 
         self.var_mode = tk.StringVar(value=cfg.get("mode", "Arquivo"))
         self.var_file = tk.StringVar(
-            value=os.path.join(BASE_DIR, "audio_para_dublar", "audio.mp3"))
+            value=os.path.join(BASE_DIR, "output", "audio.mp3"))
         self.var_url = tk.StringVar(value="")
         self.var_out = tk.StringVar(value="")
         self.var_device = tk.StringVar(value=cfg.get("device", "auto"))
@@ -470,7 +470,7 @@ class DublarGUI(ctk.CTk):
             if not self.var_out.get().strip():
                 ext = ".mp4" if path.lower().endswith((".mp4", ".mkv", ".mov", ".avi", ".webm")) else ".mp3"
                 base = os.path.splitext(os.path.basename(path))[0]
-                self.var_out.set(os.path.join(os.path.dirname(path), base + "_dublado" + ext))
+                self.var_out.set(os.path.join(OUTPUT_DIR, base + "_dublado" + ext))
             self._update_hint()
 
     def _pick_out(self):
@@ -876,7 +876,7 @@ class DublarGUI(ctk.CTk):
         if not inp:
             return
         out = self.var_out.get() or os.path.join(
-            os.path.dirname(os.path.abspath(inp)),
+            OUTPUT_DIR,
             os.path.splitext(os.path.basename(inp))[0] + "_dublado.mp3")
         d = os.path.dirname(os.path.abspath(out))
         try:

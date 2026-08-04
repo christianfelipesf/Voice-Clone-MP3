@@ -16,7 +16,7 @@ da legenda e silenciada e a voz dublada entra no lugar, esticada
 (rubberband) para ter a MESMA duracao da fala original.
 
 Uso (CLI):
-    python dublar.py --audio "audio_para_dublar\\audio.mp3" --srt "audio_para_dublar\\audio.srt"
+    python dublar.py --audio "output\\audio.mp3" --srt "output\\audio.srt"
     python dublar.py --audio a.mp3 --srt a.srt --out a_dublado.mp3 --device cuda --volume 1.2
     python dublar.py --audio filme.mp4 --srt filme.srt        # video mantem a imagem
     python dublar.py --audio a.mp3                            # modo automatico
@@ -34,7 +34,7 @@ import subprocess
 import numpy as np
 import soundfile as sf
 
-from dublador.config import force_utf8_stdout, has_video_stream
+from dublador.config import force_utf8_stdout, has_video_stream, OUTPUT_DIR
 
 SRC_SR = 24000          # amostragem da saida do Chatterbox
 TARGET_SR = 44100       # amostragem final
@@ -622,8 +622,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Exemplo:\n"
-            "  python dublar.py --audio audio_para_dublar\\audio.mp3 "
-            "--srt audio_para_dublar\\audio.srt\n"
+            "  python dublar.py --audio output\\audio.mp3 "
+            "--srt output\\audio.srt\n"
             "  python dublar.py --audio filme.mp4 --srt filme.srt\n"
             "  python dublar.py --audio a.mp3\n"
             "    (sem --srt: detecta o idioma, transcreve com Whisper e\n"
@@ -711,9 +711,9 @@ def main():
         if not entries:
             sys.exit("[ERRO] Nenhuma fala detectada no audio.")
         if args.gen_srt:
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
             base = os.path.splitext(os.path.basename(args.audio))[0]
-            srt_path = os.path.join(os.path.dirname(os.path.abspath(args.audio)),
-                                    base + "_traducao.srt")
+            srt_path = os.path.join(OUTPUT_DIR, base + "_traducao.srt")
             write_srt(entries, srt_path)
             print(f"  [SRT] Traducao salva em: {srt_path}")
     else:
@@ -751,9 +751,10 @@ def main():
     is_video = has_video_stream(args.audio)
     base = os.path.splitext(os.path.basename(args.audio))[0]
     default_ext = ".mp4" if is_video else ".mp3"
-    out_path = args.out or os.path.join(os.path.dirname(os.path.abspath(args.audio)),
+    out_path = args.out or os.path.join(OUTPUT_DIR,
                                         base + "_dublado" + default_ext)
     out_dir = os.path.dirname(os.path.abspath(out_path))
+    os.makedirs(out_dir, exist_ok=True)
     work_dir = args.workdir or os.path.join(out_dir, f".dub_{base}")
     parts_dir = os.path.join(work_dir, "parts")
     os.makedirs(parts_dir, exist_ok=True)

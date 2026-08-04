@@ -34,7 +34,7 @@ import tempfile
 
 import yt_dlp
 
-from dublador.config import (SCRIPT, force_utf8_stdout,
+from dublador.config import (SCRIPT, OUTPUT_DIR, force_utf8_stdout,
                              sanitize as _sanitize)
 from dublador.core import parse_srt, translate_text, write_srt
 
@@ -464,8 +464,8 @@ def main():
             print("  Nenhuma legenda disponivel - usando Whisper.")
 
         extra = {
-            "out": args.out or os.path.join(os.getcwd(),
-                                            sanitize(title) + "_dublado.mp4"),
+            "out": args.out or os.path.join(OUTPUT_DIR,
+                                            _sanitize(title) + "_dublado.mp4"),
             "whisper_model": args.whisper_model,
             "whisper_beam": args.whisper_beam,
             "engine": args.engine,

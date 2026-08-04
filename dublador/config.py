@@ -24,6 +24,7 @@ CONFIG_PATH = os.path.join(BASE_DIR, "dublador_config.json")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 UPLOAD_DIR = os.path.join(BASE_DIR, "web_uploads")
 JOBS_DIR = os.path.join(BASE_DIR, "web_jobs")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 DEVICES = ["auto", "cuda", "cpu"]
 LANGS = ["pt", "en", "es", "fr", "de", "it", "zh", "ja", "ko"]

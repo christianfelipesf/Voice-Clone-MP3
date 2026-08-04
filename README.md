@@ -81,7 +81,7 @@ python dublar_gui.py
 Linha de comando:
 
 ```
-python dublar.py --audio "audio_para_dublar\audio.mp3" --srt "audio_para_dublar\audio.srt"
+python dublar.py --audio "output\audio.mp3" --srt "output\audio.srt"
 python dublar.py --audio a.mp3 --srt a.srt --out a_dublado.mp3 --device cuda --volume 1.2
 python dublar.py --audio filme.mp4 --srt filme.srt          # gera filme_dublado.mp4
 python dublar.py --audio a.mp3                              # modo automatico (sem .srt)
@@ -142,5 +142,8 @@ dublador/
     web.py          - painel web Flask (create_app + WebServer embutivel)
     gui.py          - menu grafico customtkinter (sobe o web server junto)
 static/             - frontend do painel web (Pico.css/mpegts.js)
-audio_para_dublar/  - pasta de exemplo
+output/             - pasta de exemplo; saidas dubladas sao salvas aqui por padrao
+```
+
+Os modulos ficam no pacote `dublador/` (a pasta raiz fica limpa).
 ```

@@ -180,7 +180,7 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-audio_para_dublar/
+output/
 .dub_*/
 
 # Dublador web - dados gerados em runtime
