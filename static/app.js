@@ -17,6 +17,7 @@
     modeFile: $("mode-file"), modeYt: $("mode-yt"),
     reset: $("btn-reset"),
     device: $("device"), engine: $("engine"), lang: $("lang"), whisper: $("whisper"),
+    voice: $("voice"),
     parallel: $("parallel"), whisperBeam: $("whisper-beam"),
     res: $("res"), cookies: $("cookies"),
     volume: $("volume"), temp: $("temp"),
@@ -41,6 +42,9 @@
 
   var LOG_MAX_CHARS = 5000;
   var SSE_RETRY_MS = 2000;
+
+  var voiceVoices = {};
+  var voiceModes = [];
 
   // ------------------------------------------------------------------
   function apiInfo() {
@@ -91,6 +95,40 @@
     if (!sel) return;
     sel.textContent = text;
     sel.className = "pill" + (state ? " " + state : "");
+  }
+
+  // Preenche o seletor de voz (Edge TTS) com as vozes do idioma escolhido,
+  // alem dos modos "auto" (sorteia uma voz p/ o video inteiro), feminina e
+  // masculina.
+  function fillVoice(info, selected) {
+    if (!els.voice) return;
+    if (info) {
+      voiceVoices = info.voices || {};
+      voiceModes = info.voice_modes || [
+        ["auto", "Automatica (sorteia uma voz)"],
+        ["feminina", "Voz feminina"],
+        ["masculina", "Voz masculina"]
+      ];
+    }
+    var lang = (els.lang && els.lang.value) || "pt";
+    var list = voiceModes.slice();
+    (voiceVoices[lang] || []).forEach(function (v, i) {
+      list.push([v, v + (i === 0 ? " (feminina)" : " (masculina)")]);
+    });
+    var prev = els.voice.value;
+    fillSelect(els.voice, list,
+               selected !== undefined && selected !== null
+                 ? String(selected) : prev);
+    var cur = els.voice.value;
+    var valid = Array.prototype.some.call(els.voice.options, function (o) {
+      return o.value === cur;
+    });
+    if (!valid) els.voice.value = "auto";
+  }
+
+  function updateVoiceEnabled() {
+    if (!els.voice) return;
+    els.voice.disabled = els.engine && els.engine.value === "chatterbox";
   }
 
   function setStatus(text) {
@@ -144,6 +182,7 @@
         fillSelect(els.device, info.devices, d.device);
         fillSelect(els.engine, info.engines, d.engine);
         fillSelect(els.lang, info.langs, d.lang);
+        fillVoice(info, d.voice);
         fillSelect(els.whisper, info.whisper_models, d.whisper);
         fillSelect(els.parallel, ["1", "2", "4"], d.parallel || "1");
         fillSelect(els.res, info.resolutions, d.res);
@@ -175,6 +214,7 @@
     if (els.device) fd.append("device", els.device.value);
     if (els.engine) fd.append("engine", els.engine.value);
     if (els.lang) fd.append("lang", els.lang.value);
+    if (els.voice) fd.append("voice", els.voice.value || "auto");
     if (els.whisper) fd.append("whisper", els.whisper.value);
     if (els.parallel) fd.append("parallel", els.parallel.value || "1");
     if (els.whisperBeam) fd.append("whisper_beam", els.whisperBeam.value || "");
@@ -516,6 +556,8 @@
       fillSelect(els.engine, info.engines, info.defaults.engine);
       fillSelect(els.lang, info.langs, info.defaults.lang);
       fillSelect(els.whisper, info.whisper_models, info.defaults.whisper);
+      fillVoice(info, info.defaults.voice);
+      updateVoiceEnabled();
       fillSelect(els.parallel, ["1", "2", "4"], info.defaults.parallel || "1");
       fillSelect(els.res, info.resolutions, info.defaults.res);
       fillSelect(els.qsRes, info.resolutions, info.defaults.res);
@@ -544,6 +586,14 @@
         if (els.modeFile) els.modeFile.hidden = yt;
       });
     });
+
+    if (els.lang) {
+      els.lang.addEventListener("change", function () { fillVoice(); });
+    }
+    if (els.engine) {
+      els.engine.addEventListener("change", updateVoiceEnabled);
+    }
+    updateVoiceEnabled();
 
     if (els.start) els.start.addEventListener("click", startJob);
     if (els.qsGo) els.qsGo.addEventListener("click", qsStart);

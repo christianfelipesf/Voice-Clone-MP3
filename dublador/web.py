@@ -58,6 +58,7 @@ from dublador.config import (STATIC_DIR, UPLOAD_DIR, JOBS_DIR,
                              SCRIPT, YT_SCRIPT, PYTHON,
                              DEVICES, LANGS, WHISPER_MODELS, RESOLUTIONS,
                              BROWSERS, ENGINE_LABELS, PHASES, DEFAULTS,
+                             EDGE_VOICES, VOICE_MODES,
                              engine_to_value, save_config, load_config,
                              reset_config, force_utf8_stdout,
                              ffmpeg_available, sanitize, has_video_stream)
@@ -96,6 +97,7 @@ def default_opts():
         "dry": False,
         "parallel": val("parallel", DEFAULTS.get("parallel", "1")),
         "whisper_beam": val("whisper_beam", DEFAULTS.get("whisper_beam", "")),
+        "voice": val("voice", DEFAULTS.get("voice", "auto")),
     }
 
 
@@ -118,6 +120,7 @@ class Job:
         self.q = queue.Queue()
         self.progress = [0, 0]
         self.segments = []
+        self.plan = []
         self.preview = None
         self.preview_resume_from = 0.0
         self.error = None
@@ -162,6 +165,11 @@ def _parse(job, line):
         _emit(job, "progress", done=done, total=total,
               pct=(done / max(total, 1)))
         return
+    m = re.match(r"^\[PLAN-SEG\]\s+(\d+)\t([\d.eE+-]+)\t([\d.eE+-]+)\s*$", line)
+    if m:
+        job.plan.append((int(m.group(1)), float(m.group(2)),
+                         float(m.group(3))))
+        return
     m = re.match(r"^\[SEG\] (\d+)\t(.+?)\t([\d.]+)\t([\d.]+)\t(.*)$", line)
     if m:
         seg = {"idx": int(m.group(1)), "path": m.group(2),
@@ -171,6 +179,8 @@ def _parse(job, line):
         job.preview_resume_from = max(job.preview_resume_from, seg["end"])
         _emit(job, "seg", **seg)
         if job.preview is not None:
+            if not job.preview.has_plan() and job.plan:
+                job.preview.set_plan(job.plan)
             job.preview.add_segment(seg["start"], seg["end"], seg["path"])
         return
     m = re.match(r"^\[VIDEO\] (.+)$", line)
@@ -286,6 +296,7 @@ def build_file_cmd(job, audio_path, srt_path, out_path, opts):
         cmd += ["--whisper-model", opts["whisper"]]
         _add_numeric(cmd, "--whisper-beam", opts.get("whisper_beam"))
     cmd += ["--out", out_path]
+    cmd += ["--voice", opts.get("voice") or "auto"]
     if opts["device"] not in ("", "auto"):
         cmd += ["--device", opts["device"]]
     parallel = int(opts.get("parallel") or 1)
@@ -310,6 +321,7 @@ def build_yt_cmd(job, url, out_path, opts):
     cmd += ["--whisper-model", opts["whisper"]]
     _add_numeric(cmd, "--whisper-beam", opts.get("whisper_beam"))
     cmd += ["--engine", opts["engine"]]
+    cmd += ["--voice", opts.get("voice") or "auto"]
     if opts.get("cookies"):
         cmd += ["--cookies-from-browser", opts["cookies"]]
     parallel = int(opts.get("parallel") or 1)
@@ -328,6 +340,20 @@ def build_yt_cmd(job, url, out_path, opts):
 # ============================================================
 # ROTAS
 # ============================================================
+
+def _wait_preview(job, timeout=90.0):
+    """Espera (com limite) o preview ficar pronto. Em jobs do YouTube o
+    preview so pode ser montado depois que o video for baixado; quem pede
+    o stream antes disso nao deve levar 404 imediato, e sim aguardar."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if job.preview is not None:
+            return job.preview
+        if job.status in ("done", "error", "cancelled"):
+            return None
+        time.sleep(0.1)
+    return None
+
 
 def create_app():
     """Cria o app Flask. Requer flask instalado."""
@@ -354,6 +380,8 @@ def create_app():
             "resolutions": RESOLUTIONS,
             "browsers": BROWSERS,
             "engines": ENGINE_LABELS,
+            "voices": EDGE_VOICES,
+            "voice_modes": VOICE_MODES,
             "defaults": default_opts(),
         })
 
@@ -466,9 +494,14 @@ def create_app():
     @app.route("/api/jobs/<jid>/preview")
     def job_preview(jid):
         job = get_job(jid)
-        if job is None or job.preview is None:
+        if job is None:
             abort(404)
-        return Response(job.preview.iter_output(), mimetype="video/mp2t",
+        pv = job.preview
+        if pv is None:
+            pv = _wait_preview(job)
+            if pv is None:
+                abort(404)
+        return Response(pv.iter_output(), mimetype="video/mp2t",
                         headers={"Cache-Control": "no-cache",
                                  "X-Accel-Buffering": "no"})
 

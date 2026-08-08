@@ -308,6 +308,8 @@ def run_dublar(video_path, srt_path, language, extra):
            "--language", language]
     if extra.get("engine"):
         cmd += ["--engine", extra["engine"]]
+    if extra.get("voice"):
+        cmd += ["--voice", extra["voice"]]
     if srt_path:
         cmd += ["--srt", srt_path]
     else:
@@ -374,6 +376,12 @@ def main():
     ap.add_argument("--engine", default="edge",
                     help="Motor de dublagem: edge (Edge TTS, leve, padrao) "
                          "ou chatterbox (clonagem de voz, offline)")
+    ap.add_argument("--voice", default="auto",
+                    help="Voz do Edge TTS (motor edge): 'auto' sorteia uma "
+                         "voz e usa ela no video inteiro; 'feminina' ou "
+                         "'masculina' fixam o genero; ou o nome completo "
+                         "da voz (ex.: pt-BR-FranciscaNeural). "
+                         "Padrao: auto")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--keep-parts", action="store_true")
     ap.add_argument("--emit-paths", action="store_true")
@@ -469,6 +477,7 @@ def main():
             "whisper_model": args.whisper_model,
             "whisper_beam": args.whisper_beam,
             "engine": args.engine,
+            "voice": args.voice,
             "device": args.device,
             "temperature": args.temperature,
             "volume": args.volume,

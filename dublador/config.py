@@ -34,6 +34,27 @@ WHISPER_MODELS = ["distil-large-v3", "large-v3", "distil-medium.en",
                   "medium", "small", "base", "tiny"]
 RESOLUTIONS = ["360", "720", "1080", "480", "240", "144", "best"]
 BROWSERS = ["", "edge", "chrome", "firefox", "brave", "opera"]
+
+# Vozes do Edge TTS (motor leve) por idioma de saida: (feminina, masculina).
+EDGE_VOICES = {
+    "pt": ("pt-BR-FranciscaNeural", "pt-BR-AntonioNeural"),
+    "en": ("en-US-JennyNeural", "en-US-GuyNeural"),
+    "es": ("es-ES-ElviraNeural", "es-ES-AlvaroNeural"),
+    "fr": ("fr-FR-DeniseNeural", "fr-FR-HenriNeural"),
+    "de": ("de-DE-KatjaNeural", "de-DE-ConradNeural"),
+    "it": ("it-IT-ElsaNeural", "it-IT-DiegoNeural"),
+    "zh": ("zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural"),
+    "ja": ("ja-JP-NanamiNeural", "ja-JP-KeitaNeural"),
+    "ko": ("ko-KR-SunHiNeural", "ko-KR-InJoonNeural"),
+}
+
+# Modos de escolha de voz no painel web: 'auto' sorteia UMA voz e usa a
+# mesma para o video inteiro; 'feminina'/'masculina' fixam o genero.
+VOICE_MODES = [
+    ("auto", "Automatica (sorteia uma voz)"),
+    ("feminina", "Voz feminina"),
+    ("masculina", "Voz masculina"),
+]
 ENGINE_LABELS = {"edge": "Edge TTS (leve, padrao)",
                  "chatterbox": "Chatterbox (clonagem)"}
 
@@ -71,6 +92,7 @@ DEFAULTS = {
     "cookies": "",
     "parallel": "1",
     "whisper_beam": "",
+    "voice": "auto",
     "theme_dark": False,
     "mode": "Arquivo",
     "preview": True,

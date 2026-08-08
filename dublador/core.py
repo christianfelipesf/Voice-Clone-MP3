@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import time
+import random
 import argparse
 import shutil
 import subprocess
@@ -34,7 +35,8 @@ import subprocess
 import numpy as np
 import soundfile as sf
 
-from dublador.config import force_utf8_stdout, has_video_stream, OUTPUT_DIR
+from dublador.config import force_utf8_stdout, has_video_stream, OUTPUT_DIR, \
+    EDGE_VOICES
 
 SRC_SR = 24000          # amostragem da saida do Chatterbox
 TARGET_SR = 44100       # amostragem final
@@ -42,20 +44,27 @@ FADE_MS = 15            # crossfade nas bordas de cada legenda
 CHATTERBOX_ENGINE = None
 CHATTERBOX_T3_MODEL = "v3"   # Chatterbox Multilingual V3
 
-# Vozes do Edge TTS (motor leve) por idioma de saida.
-# Cada idioma tem uma voz feminina e uma masculina; a dublagem alterna
-# entre elas a cada legenda para soar mais natural.
-EDGE_VOICES = {
-    "pt": ("pt-BR-FranciscaNeural", "pt-BR-AntonioNeural"),
-    "en": ("en-US-JennyNeural", "en-US-GuyNeural"),
-    "es": ("es-ES-ElviraNeural", "es-ES-AlvaroNeural"),
-    "fr": ("fr-FR-DeniseNeural", "fr-FR-HenriNeural"),
-    "de": ("de-DE-KatjaNeural", "de-DE-ConradNeural"),
-    "it": ("it-IT-ElsaNeural", "it-IT-DiegoNeural"),
-    "zh": ("zh-CN-XiaoxiaoNeural", "zh-CN-YunxiNeural"),
-    "ja": ("ja-JP-NanamiNeural", "ja-JP-KeitaNeural"),
-    "ko": ("ko-KR-SunHiNeural", "ko-KR-InJoonNeural"),
-}
+
+def resolve_edge_voice(language, voice):
+    """Escolhe a voz do Edge TTS usada no video INTEIRO.
+
+    - 'auto' (padrao): sorteia uma voz (feminina ou masculina) e usa
+      sempre a mesma, em todas as falas.
+    - 'feminina'/'masculina': fixa o genero.
+    - pode receber tambem o nome completo da voz
+      (ex.: 'pt-BR-FranciscaNeural') ou qualquer valor invalido, que
+      cai em sorteio.
+    """
+    voices = EDGE_VOICES.get((language or "pt").lower(), EDGE_VOICES["pt"])
+    key = (voice or "auto").strip().lower()
+    if key in ("masculina", "masculine", "male", "homem", "1"):
+        return voices[1]
+    if key in ("feminina", "feminine", "female", "mulher", "0"):
+        return voices[0]
+    for v in voices:
+        if v.lower() == key:
+            return v
+    return random.choice(voices)
 
 
 def patch_torchaudio_soundfile():
@@ -373,16 +382,18 @@ def synthesize_chatterbox(engine, text, ref_wav, out_wav, language="pt",
 
 def synthesize_text(engine, text, ref_wav, out_wav, language="pt",
                     temperature=None, seed=None, engine_name="chatterbox",
-                    voice_idx=0):
+                    voice_idx=0, voice=None):
     """Sintetiza o texto. engine_name='chatterbox' clona a voz de ref_wav
     com o Chatterbox; engine_name='edge' usa o Edge TTS (voz neural do
-    idioma, leve, sem clonagem, requer internet). `voice_idx` alterna entre
-    a voz feminina (par) e masculina (impar) no Edge."""
+    idioma, leve, sem clonagem, requer internet). `voice` fixa a mesma voz
+    do Edge para todas as falas; `voice_idx` (par = feminino, impar =
+    masculino) e usado pelo Edge apenas quando `voice` nao e informado
+    (retrocompatibilidade)."""
     if engine_name == "edge":
         from dublador.config import ensure_pkg
         ensure_pkg("edge_tts", "edge-tts",
                    hint="Motor leve de voz online (Edge TTS).")
-        synthesize_edge(text, out_wav, language, voice_idx)
+        synthesize_edge(text, out_wav, language, voice_idx, voice)
         return
     temp = 0.8 if temperature is None else temperature
     synthesize_chatterbox(engine, text, ref_wav, out_wav, language,
@@ -403,16 +414,19 @@ def _edge_save(text, voice, path):
     asyncio.run(_go())
 
 
-def synthesize_edge(text, out_wav, language="pt", voice_idx=0):
-    """Sintetiza o texto com Edge TTS. Cada idioma tem uma voz feminina e
-    uma masculina; `voice_idx` par usa a feminina e impar a masculina.
-    Textos longos sao divididos (como no Chatterbox) e unidos por ffmpeg,
-    para nao estourar o limite por requisicao do servico."""
+def synthesize_edge(text, out_wav, language="pt", voice_idx=0, voice=None):
+    """Sintetiza o texto com Edge TTS. `voice` fixa a voz (o nome completo,
+    ex.: 'pt-BR-FranciscaNeural'); sem `voice`, usa `voice_idx` par (feminina)
+    ou impar (masculina) do idioma. Textos longos sao divididos (como no
+    Chatterbox) e unidos por ffmpeg, para nao estourar o limite por
+    requisicao do servico."""
     from dublador.config import ensure_pkg
     edge_tts = ensure_pkg("edge_tts", "edge-tts",
                           hint="Motor leve de voz online (Edge TTS).")
     voices = EDGE_VOICES.get(language.lower(), EDGE_VOICES["pt"])
-    voice = voices[voice_idx % 2]
+    if not voice:
+        voice = voices[voice_idx % 2]
+    voice = str(voice)
     chunks = split_text(text)
     if len(chunks) == 1:
         _edge_save(chunks[0], voice, out_wav)
@@ -666,6 +680,12 @@ def main():
     ap.add_argument("--seed", type=int, default=None,
                     help="Semente base para reprodutibilidade. Padrao: 1000 "
                          "(cada legenda usa seed + indice)")
+    ap.add_argument("--voice", default="auto",
+                    help="Voz do Edge TTS (motor edge): 'auto' sorteia uma "
+                         "voz e usa ela no video inteiro; 'feminina' ou "
+                         "'masculina' fixam o genero; ou o nome completo "
+                         "da voz (ex.: pt-BR-FranciscaNeural). "
+                         "Padrao: auto")
     ap.add_argument("--parallel", type=int, default=1,
                     help="Numero de sintetizadores em paralelo (Chatterbox). "
                          "1 = sequencial (padrao). 2-4 = mais rapido em PC "
@@ -790,6 +810,8 @@ def main():
     dub_entries = [e for e in entries if re.search(r"\w", e["text"])]
     if not dub_entries:
         sys.exit("[ERRO] Nenhuma legenda com texto para dublar no SRT.")
+    for e in dub_entries:
+        print(f"[PLAN-SEG] {e['index']}\t{e['start']}\t{e['end']}")
     sil_path = os.path.join(work_dir, "silence.npy") if using_mem else None
     silence = build_silence_multiplier(dub_entries, len(track), TARGET_SR,
                                        memmap_path=sil_path)
@@ -808,8 +830,12 @@ def main():
     dub_total = len(dub_entries)
 
     if is_edge:
-        # Fase A: sintetiza TODAS as legendas em paralelo (Edge TTS e
-        # limitado pela rede, nao pela CPU) e depois mixa em sequencia.
+        edge_voice = resolve_edge_voice(args.language, args.voice)
+        print(f"  Voz Edge: {edge_voice} (usada em todo o video)")
+        # Sintetiza as falas em paralelo (Edge TTS e limitado pela rede,
+        # nao pela CPU). Cada fala, ao terminar, ja vem convertida/misturada
+        # na trilha e e emitida via [SEG] imediatamente - o preview usa a fala
+        # assim que ela fica pronta, em vez de so no fim da sintese.
         jobs = []
         for pos, e in enumerate(entries):
             if not re.search(r"\w", e["text"]):
@@ -817,51 +843,51 @@ def main():
                 continue
             seg_id = f"seg_{e['index']:03d}"
             synth_wav = os.path.join(parts_dir, seg_id + ".wav")
-            jobs.append((e, synth_wav))
+            conv_wav = synth_wav[:-4] + ".conv.wav"
+            fitted_wav = synth_wav[:-4] + ".fitted.wav"
+            jobs.append((e, synth_wav, conv_wav, fitted_wav))
         print(f"  Sintetizando {len(jobs)} falas com Edge TTS "
-              f"(vozes feminina/masculina alternadas, em paralelo)...")
+              f"(uma unica voz, em paralelo; preview usa cada fala assim "
+              f"que termina)...")
         import concurrent.futures as cf
         max_workers = min(8, max(2, os.cpu_count() or 4))
         with cf.ThreadPoolExecutor(max_workers=max_workers) as pool:
             def _edge_job(e, path):
                 synthesize_text(None, e["text"], None, path,
                                 args.language, engine_name="edge",
-                                voice_idx=e["index"])
+                                voice=edge_voice)
                 return e, path
-            futs = [pool.submit(_edge_job, e, path) for e, path in jobs]
+            futs = [pool.submit(_edge_job, e, path) for e, path, _, _ in jobs]
             for i, fut in enumerate(cf.as_completed(futs), 1):
-                e, path = fut.result()
-                print(f"  [SYN {i:3d}/{len(jobs)}] {e['start']:8.3f}-{e['end']:8.3f}"
+                e, synth_wav = fut.result()
+                conv_wav = synth_wav[:-4] + ".conv.wav"
+                fitted_wav = synth_wav[:-4] + ".fitted.wav"
+                start, end = e["start"], e["end"]
+                print(f"  [SYN {i:3d}/{len(jobs)}] {start:8.3f}-{end:8.3f}"
                       f"  {e['text'][:70]}")
-        print(f"  Sintese concluida. Mixando {len(jobs)} falas na trilha...")
-        for pos, (e, synth_wav) in enumerate(jobs):
-            i_disp = pos + 1
-            n_tot = len(jobs)
-            start, end = e["start"], e["end"]
-            conv_wav = synth_wav[:-4] + ".conv.wav"
-            fitted_wav = synth_wav[:-4] + ".fitted.wav"
-            try:
-                convert_to_track_format(synth_wav, conv_wav, channels)
-                final_seg = fit_to_duration(conv_wav, fitted_wav, end - start,
-                                            channels, max_tempo=args.max_tempo)
-                data, _ = sf.read(final_seg, dtype="float32", always_2d=True)
-                limit = int(round((end - start) * sr))
-                if len(data) > limit:
-                    data = data[:limit]
-                place_segment(track, start, data, args.volume)
-                done += 1
-                print(f"[PROGRESS] {done}/{dub_total}")
-                if args.emit_paths:
-                    print(f"[SEG] {e['index']}\t{os.path.abspath(final_seg)}"
-                          f"\t{start:.3f}\t{end:.3f}\t{e['text'][:70]}")
-                if not args.keep_parts:
-                    for p in (synth_wav, conv_wav, fitted_wav):
-                        if args.emit_paths and p == final_seg:
-                            continue
-                        if os.path.exists(p):
-                            os.remove(p)
-            except Exception as ex:
-                print(f"  [DUB {i_disp:3d}/{n_tot}] [ERRO] {ex}")
+                try:
+                    convert_to_track_format(synth_wav, conv_wav, channels)
+                    final_seg = fit_to_duration(conv_wav, fitted_wav,
+                                                end - start, channels,
+                                                max_tempo=args.max_tempo)
+                    data, _ = sf.read(final_seg, dtype="float32", always_2d=True)
+                    limit = int(round((end - start) * sr))
+                    if len(data) > limit:
+                        data = data[:limit]
+                    place_segment(track, start, data, args.volume)
+                    done += 1
+                    print(f"[PROGRESS] {done}/{dub_total}")
+                    if args.emit_paths:
+                        print(f"[SEG] {e['index']}\t{os.path.abspath(final_seg)}"
+                              f"\t{start:.3f}\t{end:.3f}\t{e['text'][:70]}")
+                    if not args.keep_parts:
+                        for p in (synth_wav, conv_wav, fitted_wav):
+                            if args.emit_paths and p == final_seg:
+                                continue
+                            if os.path.exists(p):
+                                os.remove(p)
+                except Exception as ex:
+                    print(f"  [EDGE {i:3d}/{len(jobs)}] [ERRO] {ex}")
     else:
         import concurrent.futures as cf
         n_parallel = max(1, int(getattr(args, "parallel", 1) or 1))

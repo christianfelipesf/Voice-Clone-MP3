@@ -397,6 +397,11 @@ class WebLivePreview:
         self.resume_from = float(resume_from)
         self.prepare_thread = None
 
+        self.plan = []
+        self.ready = {}
+        self._wake = threading.Event()
+        self._switch_signal_sent = False
+
         self.proc_mux = None
         self.proc_orig = None
         self.pump = None
@@ -447,10 +452,30 @@ class WebLivePreview:
     # ------------------------------------------------------------------
     # RECEBER TRECHO DUBLADO
     # ------------------------------------------------------------------
+    def set_plan(self, plan):
+        """Recebe a programacao (ordem e tempos) de TODOS os trechos que
+        serao dublados, para alimentar a timeline na ordem certa e nunca
+        descartar um trecho que chegue fora de ordem."""
+        if not plan:
+            return
+        with self.lock:
+            self.plan = sorted(((float(s), float(e)) for _, s, e in plan),
+                               key=lambda it: (it[0], it[1]))
+
+    def has_plan(self):
+        with self.lock:
+            return bool(self.plan)
+
     def add_segment(self, start, end, wav_path):
         if self.closed:
             return
-        self.q.put((float(start), float(end), wav_path))
+        key = float(start)
+        with self.lock:
+            self.ready[key] = (float(start), float(end), wav_path)
+            self._wake.set()
+            if not self._dubbed_started and not self._switch_signal_sent:
+                self._switch_signal_sent = True
+                self.q.put(("first",))
 
     # ------------------------------------------------------------------
     # MUXER (sem ffplay; bytes vao para o buffer HTTP)
@@ -674,23 +699,83 @@ class WebLivePreview:
         if not self._start_muxer():
             self._drain()
             return
-        try:
-            self._feed(*first)
-        except Exception as ex:
-            self.log(f"[PREVIEW] erro ao alimentar audio: {ex}\n")
-        while not self.closed:
-            try:
-                item = self.q.get(timeout=0.2)
-            except queue.Empty:
+        self._feed_loop()
+        self._finish()
+
+    def _next_pending(self):
+        """Proximo trecho da programacao ainda nao entregue (end > sent
+        em segundos)."""
+        head = self.sent / float(self.SR)
+        with self.lock:
+            plan = list(self.plan)
+        for (s, e) in plan:
+            if e <= head:
                 continue
-            if item is None:
-                break
+            return s, e
+        return None
+
+    def _feed_loop(self):
+        """Alimenta a timeline NA ORDEM da programacao (plan).
+
+        Os trechos sintetizados chegam fora de ordem; aqui eles ficam em
+        'ready' e so entram na timeline na posicao correta. A timeline nao
+        avanca sobre um trecho ate ele estar pronto, entao nenhum trecho do
+        inicio do video e perdido."""
+        if not self.has_plan():
+            self._feed_no_plan()
+            return
+        while not self.closed:
+            nxt = self._next_pending()
+            if nxt is None:
+                # todo plan ja aplicado: completa com o restante do audio
+                # original ate o fim do video.
+                self._write_base(self.sent, self.duration_frames)
+                self.sent = max(self.sent, self.duration_frames)
+                return
+            start, end = nxt
+            with self.lock:
+                seg = self.ready.get(start)
+            if seg is None:
+                # espera esse trecho ficar pronto antes de avancar a timeline
+                self._wake.wait(0.25)
+                self._wake.clear()
+                continue
             try:
-                self._feed(*item)
+                self._feed(start, end, seg[2])
             except Exception as ex:
                 self.log(f"[PREVIEW] erro ao alimentar audio: {ex}\n")
-                break
-        self._finish()
+                return
+            with self.lock:
+                self.ready.pop(start, None)
+
+    def _feed_no_plan(self):
+        """Sem programacao conhecida: entrega os trechos que ja chegaram na
+        ordem em que aparecem na timeline (melhor esforco)."""
+        while not self.closed:
+            with self.lock:
+                items = sorted(self.ready.values(), key=lambda t: (t[0], t[1]))
+            if not items:
+                self._wake.wait(0.25)
+                self._wake.clear()
+                continue
+            for seg in items:
+                if self.closed:
+                    return
+                start, end, path = seg
+                head = self.sent / float(self.SR)
+                if end <= head:
+                    with self.lock:
+                        self.ready.pop(start, None)
+                    continue
+                if start < head:
+                    continue
+                try:
+                    self._feed(start, end, path)
+                except Exception as ex:
+                    self.log(f"[PREVIEW] erro ao alimentar audio: {ex}\n")
+                    return
+                with self.lock:
+                    self.ready.pop(start, None)
 
     def _drain(self):
         while not self.closed:
